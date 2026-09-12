@@ -155,21 +155,62 @@
 
   <!-- ============ CONTRACTS ============ -->
   <section id="tab-contracts" class="hidden">
+    <div id="notifyPanel"></div>
     <div class="card">
-      <p class="section-title">New contract</p>
+      <p class="section-title" id="contractFormTitle">New contract</p>
+
       <div class="row">
-        <div><label>Unit</label><select id="cUnit"></select></div>
-        <div><label>Renter</label><select id="cRenter"></select></div>
-        <div><label>Monthly rent</label><input id="cRent" type="number" step="0.01"></div>
+        <div><label>Location</label><select id="cLocation" onchange="onLocationChange()"></select></div>
+        <div><label>Building</label><select id="cBuilding" onchange="onBuildingChange()"></select></div>
+        <div><label>Unit</label><select id="cUnit" onchange="onUnitChange()"></select></div>
+      </div>
+
+      <div class="row" style="margin-top:8px;">
+        <div>
+          <label>Renter</label>
+          <select id="renterMode" onchange="onRenterModeChange()">
+            <option value="new">New renter (fill in below)</option>
+            <option value="existing">Existing renter (select from list)</option>
+          </select>
+        </div>
+        <div id="existingRenterBlock" class="hidden">
+          <label>Select renter</label>
+          <select id="cRenterExisting"></select>
+        </div>
+      </div>
+
+      <div id="newRenterBlock">
+        <div class="row">
+          <div><label>Full name (required)</label><input id="cNewName"></div>
+          <div><label>Address</label><input id="cNewAddress"></div>
+          <div><label>Nature of business</label><input id="cNewBusiness" placeholder="e.g. Sari-sari store, Motor shop"></div>
+          <div><label>Contact number</label><input id="cNewContact" placeholder="+639..."></div>
+          <div><label>Email (optional)</label><input id="cNewEmail"></div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:8px;">
+        <div>
+          <label>Rent period</label>
+          <select id="cRentPeriod" onchange="onRentPeriodChange()">
+            <option value="monthly">Monthly</option>
+            <option value="daily">Daily</option>
+          </select>
+        </div>
+        <div><label id="cRentLabel">Monthly rent</label><input id="cRent" type="number" step="0.01"></div>
         <div><label>Advance</label><input id="cAdvance" type="number" step="0.01" value="0"></div>
         <div><label>Deposit</label><input id="cDeposit" type="number" step="0.01" value="0"></div>
         <div><label>Start date</label><input id="cStart" type="date"></div>
-        <div><label>Term (months)</label><input id="cTerm" type="number" value="12"></div>
-        <div><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="28"></div>
+        <div><label id="cTermLabel">Term (months)</label><input id="cTerm" type="number" value="12"></div>
+        <div id="cDueDayField"><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="28"></div>
       </div>
+
+      <div><label>Notes</label><textarea id="cNotes" rows="2"></textarea></div>
       <div><label>Terms &amp; Conditions</label><textarea id="cTerms" rows="10"></textarea></div>
-      <button class="btn" onclick="addContract()">Create Contract</button>
-      <p class="muted">This auto-generates the full rent schedule and sets the contract end date. If this unit already has an active contract, it will be closed out automatically (kept on file, not deleted) the day before this one starts.</p>
+
+      <button class="btn" id="contractSubmitBtn" onclick="saveContract()">Create Contract</button>
+      <button class="btn secondary hidden" id="cancelEditBtn" onclick="cancelEditContract()">Cancel edit</button>
+      <p class="muted">Creating a new contract for a unit that already has an active one closes the old one out automatically (kept on file, not deleted) the day before this one starts. Editing an existing contract only regenerates the schedule going forward — anything already paid stays untouched.</p>
     </div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
@@ -249,12 +290,83 @@ const DEFAULT_TERMS = `1. TERM: This lease shall commence on the Start Date indi
 By signing below, both parties agree to the terms and conditions stated above.`;
 
 let currentUnitFilter = null;
+let editingContractId = null;
+let allLocations = [], allBuildings = [], allUnits = [];
 
 async function loadAll(){
   if(!sb) return;
   document.getElementById('cTerms').value = DEFAULT_TERMS;
+  onRenterModeChange();
+  onRentPeriodChange();
   await Promise.all([loadDashboard(), loadPropertyDropdowns(), loadUnitsTable(),
-    loadRenters(), loadContractDropdowns(), loadContractUnitFilterDropdown(), loadContractsTable(), loadPayContractSelect()]);
+    loadRenters(), loadContractCascadingData(), loadContractUnitFilterDropdown(), loadContractsTable(), loadPayContractSelect()]);
+}
+
+// ---------- CASCADING LOCATION -> BUILDING -> UNIT (Contracts form) ----------
+async function loadContractCascadingData(){
+  const [{ data: locs }, { data: blds }, { data: units }] = await Promise.all([
+    sb.from('locations').select('id, name').order('name'),
+    sb.from('buildings').select('id, name, location_id').order('name'),
+    sb.from('units').select('id, unit_name, price, building_id').order('unit_name')
+  ]);
+  allLocations = locs||[]; allBuildings = blds||[]; allUnits = units||[];
+
+  document.getElementById('cLocation').innerHTML =
+    `<option value="">All locations</option>` +
+    allLocations.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
+
+  populateBuildingDropdown();
+  populateUnitDropdown();
+
+  const { data: renters } = await sb.from('renters').select('id, name, business_name').order('name');
+  document.getElementById('cRenterExisting').innerHTML =
+    (renters||[]).map(r=>`<option value="${r.id}">${r.name}${r.business_name ? ' — '+r.business_name : ''}</option>`).join('');
+}
+
+function populateBuildingDropdown(){
+  const locId = document.getElementById('cLocation').value;
+  const list = locId ? allBuildings.filter(b=>b.location_id===locId) : allBuildings;
+  document.getElementById('cBuilding').innerHTML =
+    `<option value="">All buildings</option>` + list.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
+}
+
+function populateUnitDropdown(){
+  const bldId = document.getElementById('cBuilding').value;
+  let list = allUnits;
+  if(bldId) list = list.filter(u=>u.building_id===bldId);
+  else {
+    const locId = document.getElementById('cLocation').value;
+    if(locId){
+      const bldIds = new Set(allBuildings.filter(b=>b.location_id===locId).map(b=>b.id));
+      list = list.filter(u=>bldIds.has(u.building_id));
+    }
+  }
+  const unitSel = document.getElementById('cUnit');
+  unitSel.innerHTML = list.map(u=>`<option value="${u.id}" data-price="${u.price}">${u.unit_name}</option>`).join('');
+  onUnitChange();
+}
+
+function onLocationChange(){ populateBuildingDropdown(); populateUnitDropdown(); }
+function onBuildingChange(){ populateUnitDropdown(); }
+function onUnitChange(){
+  const unitSel = document.getElementById('cUnit');
+  const price = unitSel.selectedOptions[0]?.dataset.price;
+  if(price !== undefined) document.getElementById('cRent').value = price;
+}
+
+function onRenterModeChange(){
+  const mode = document.getElementById('renterMode').value;
+  document.getElementById('existingRenterBlock').classList.toggle('hidden', mode!=='existing');
+  document.getElementById('newRenterBlock').classList.toggle('hidden', mode==='existing');
+}
+
+function onRentPeriodChange(){
+  const period = document.getElementById('cRentPeriod').value;
+  const daily = period === 'daily';
+  document.getElementById('cRentLabel').textContent = daily ? 'Daily rent' : 'Monthly rent';
+  document.getElementById('cTermLabel').textContent = daily ? 'Term (days)' : 'Term (months)';
+  document.getElementById('cTerm').value = daily ? 30 : 12;
+  document.getElementById('cDueDayField').classList.toggle('hidden', daily);
 }
 
 // ---------- DASHBOARD ----------
@@ -367,7 +479,7 @@ async function addUnit(){
   await sb.from('units').insert({ building_id, unit_name, price, description });
   document.getElementById('unitName').value=''; document.getElementById('unitPrice').value='';
   document.getElementById('unitDesc').value='';
-  loadUnitsTable(); loadContractDropdowns();
+  loadUnitsTable(); loadContractCascadingData();
 }
 
 async function loadUnitsTable(){
@@ -395,7 +507,7 @@ async function addRenter(){
   if(!name) return alert('Name required');
   await sb.from('renters').insert({ name, business_name, contact_number, email, address });
   ['rName','rBusiness','rContact','rEmail','rAddress'].forEach(id=>document.getElementById(id).value='');
-  loadRenters(); loadContractDropdowns();
+  loadRenters(); loadContractCascadingData();
 }
 
 async function loadRenters(){
@@ -411,50 +523,161 @@ async function loadRenters(){
   `).join('');
 }
 
-// ---------- CONTRACTS ----------
-async function loadContractDropdowns(){
-  const { data: units } = await sb.from('units').select('id, unit_name, price').order('unit_name');
-  const unitSel = document.getElementById('cUnit');
-  unitSel.innerHTML = (units||[]).map(u=>`<option value="${u.id}" data-price="${u.price}">${u.unit_name}</option>`).join('');
-  unitSel.onchange = ()=>{ document.getElementById('cRent').value = unitSel.selectedOptions[0]?.dataset.price || ''; };
-  if(units && units[0]) document.getElementById('cRent').value = units[0].price;
+// ---------- CONTRACTS: create / edit / notify ----------
 
-  const { data: renters } = await sb.from('renters').select('id, name').order('name');
-  document.getElementById('cRenter').innerHTML = (renters||[]).map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+function buildNotifyMessage(kind, renterName, unitName, c){
+  if(kind === 'new'){
+    return `Hi ${renterName}, your lease for ${unitName} has been set up. `+
+      `Rent: ${fmtMoney(c.rent_amount)} (${c.rent_period}), starting ${fmtDate(c.start_date)} `+
+      `through ${fmtDate(c.end_date)}. Please reach out if you have any questions. Thank you!`;
+  }
+  return `Hi ${renterName}, your contract for ${unitName} has been updated. `+
+    `New rent: ${fmtMoney(c.rent_amount)} (${c.rent_period}), effective now, running through ${fmtDate(c.end_date)}. `+
+    `Please reach out if you have any questions. Thank you!`;
 }
 
-async function addContract(){
+function showNotifyPanel(renterName, email, contact, message){
+  const emailHref = email ? `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent('Your lease contract')}&body=${encodeURIComponent(message)}` : null;
+  const viberDigits = (contact||'').replace(/[^0-9]/g,'');
+  const viberHref = viberDigits ? `viber://chat?number=${viberDigits}` : null;
+  document.getElementById('notifyPanel').innerHTML = `
+    <div class="card" style="border-color:var(--accent);">
+      <p class="section-title">Notify ${renterName}?</p>
+      <textarea id="notifyMessage" rows="4">${message}</textarea>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        ${emailHref ? `<a class="btn" style="text-decoration:none;display:inline-block;" href="${emailHref}">📧 Open Email</a>` : `<span class="muted">No email on file</span>`}
+        ${viberHref ? `<a class="btn secondary" style="text-decoration:none;display:inline-block;" href="${viberHref}">💜 Open Viber</a>` : `<span class="muted">No contact number on file</span>`}
+        <button class="btn secondary" onclick="document.getElementById('notifyPanel').innerHTML=''">Dismiss</button>
+      </div>
+      <p class="muted">These open your email/Viber app with the message pre-filled — review and hit send yourself, nothing sends automatically.</p>
+    </div>`;
+}
+
+async function startEditContract(id){
+  const { data: c } = await sb.from('contracts')
+    .select('*, units(id, unit_name, building_id, buildings(id, location_id)), renters(id, name)')
+    .eq('id', id).single();
+  if(!c) return;
+  editingContractId = id;
+
+  document.getElementById('contractFormTitle').textContent = `Editing contract — ${c.units?.unit_name||''}`;
+  document.getElementById('contractSubmitBtn').textContent = 'Update Contract';
+  document.getElementById('cancelEditBtn').classList.remove('hidden');
+
+  document.getElementById('cLocation').value = c.units?.buildings?.location_id || '';
+  populateBuildingDropdown();
+  document.getElementById('cBuilding').value = c.units?.building_id || '';
+  populateUnitDropdown();
+  document.getElementById('cUnit').value = c.unit_id;
+
+  document.getElementById('renterMode').value = 'existing';
+  onRenterModeChange();
+  document.getElementById('cRenterExisting').value = c.renter_id;
+
+  document.getElementById('cRentPeriod').value = c.rent_period || 'monthly';
+  onRentPeriodChange();
+  document.getElementById('cRent').value = c.rent_amount;
+  document.getElementById('cAdvance').value = c.advance;
+  document.getElementById('cDeposit').value = c.deposit;
+  document.getElementById('cStart').value = c.start_date;
+  document.getElementById('cTerm').value = c.rent_period === 'daily' ? (c.term_days||30) : (c.term_months||12);
+  document.getElementById('cDueDay').value = c.rent_due_day || 1;
+  document.getElementById('cNotes').value = c.notes || '';
+  document.getElementById('cTerms').value = c.terms_and_conditions || DEFAULT_TERMS;
+
+  document.querySelector('#tab-contracts').scrollIntoView({behavior:'smooth'});
+}
+
+function cancelEditContract(){
+  editingContractId = null;
+  document.getElementById('contractFormTitle').textContent = 'New contract';
+  document.getElementById('contractSubmitBtn').textContent = 'Create Contract';
+  document.getElementById('cancelEditBtn').classList.add('hidden');
+  document.getElementById('renterMode').value = 'new';
+  onRenterModeChange();
+  document.getElementById('cTerms').value = DEFAULT_TERMS;
+}
+
+async function saveContract(){
+  const isDaily = document.getElementById('cRentPeriod').value === 'daily';
+  const unit_id = document.getElementById('cUnit').value;
+  if(!unit_id) return alert('Select a unit');
+
+  // Resolve renter: existing selection, or create a new renter record first
+  let renter_id;
+  if(document.getElementById('renterMode').value === 'existing'){
+    renter_id = document.getElementById('cRenterExisting').value;
+    if(!renter_id) return alert('Select an existing renter, or switch to "New renter"');
+  } else {
+    const name = document.getElementById('cNewName').value.trim();
+    if(!name) return alert('Renter name is required');
+    const { data: newRenter, error: rErr } = await sb.from('renters').insert({
+      name,
+      address: document.getElementById('cNewAddress').value.trim(),
+      business_name: document.getElementById('cNewBusiness').value.trim(),
+      contact_number: document.getElementById('cNewContact').value.trim(),
+      email: document.getElementById('cNewEmail').value.trim()
+    }).select().single();
+    if(rErr) return alert('Error creating renter: ' + rErr.message);
+    renter_id = newRenter.id;
+  }
+
+  const start_date = document.getElementById('cStart').value;
+  if(!start_date) return alert('Start date is required');
+
   const payload = {
-    unit_id: document.getElementById('cUnit').value,
-    renter_id: document.getElementById('cRenter').value,
+    unit_id, renter_id,
     rent_amount: parseFloat(document.getElementById('cRent').value) || 0,
     advance: parseFloat(document.getElementById('cAdvance').value) || 0,
     deposit: parseFloat(document.getElementById('cDeposit').value) || 0,
-    start_date: document.getElementById('cStart').value,
-    term_months: parseInt(document.getElementById('cTerm').value) || 12,
+    start_date,
+    rent_period: isDaily ? 'daily' : 'monthly',
+    term_months: isDaily ? null : (parseInt(document.getElementById('cTerm').value) || 12),
+    term_days: isDaily ? (parseInt(document.getElementById('cTerm').value) || 30) : null,
     rent_due_day: parseInt(document.getElementById('cDueDay').value) || 1,
     notes: document.getElementById('cNotes').value.trim(),
     terms_and_conditions: document.getElementById('cTerms').value
   };
-  if(!payload.unit_id || !payload.renter_id || !payload.start_date) return alert('Unit, renter and start date are required');
 
-  // A unit can only have one current renter. If this unit still has an
-  // active contract, close it out (kept on file, not deleted) the day
-  // before the new one starts, so the new renter becomes "current".
-  const { data: existingActive } = await sb.from('contracts')
-    .select('id, start_date').eq('unit_id', payload.unit_id).eq('status','active').maybeSingle();
-  if(existingActive){
-    const newStart = new Date(payload.start_date + 'T00:00:00');
-    const dayBefore = new Date(newStart.getTime() - 86400000).toISOString().slice(0,10);
-    if(!confirm(`This unit already has an active renter. Creating this contract will close out their contract (end date set to ${dayBefore}) and make the new renter current. Continue?`)) return;
-    await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore }).eq('id', existingActive.id);
+  if(editingContractId){
+    const { error } = await sb.from('contracts').update(payload).eq('id', editingContractId);
+    if(error) return alert('Error: ' + error.message);
+    await sb.rpc('regenerate_schedule_from_today', { p_contract_id: editingContractId });
+
+    const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
+    const { data: unit } = await sb.from('units').select('unit_name').eq('id', unit_id).single();
+    const { data: fresh } = await sb.from('contracts').select('*').eq('id', editingContractId).single();
+    showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number,
+      buildNotifyMessage('update', renter?.name||'', unit?.unit_name||'', fresh));
+
+    cancelEditContract();
+  } else {
+    // A unit can only have one current renter. If it already has an active
+    // contract, close it out (kept on file, not deleted) the day before
+    // this one starts, so the new renter becomes "current".
+    const { data: existingActive } = await sb.from('contracts')
+      .select('id').eq('unit_id', unit_id).eq('status','active').maybeSingle();
+    if(existingActive){
+      const newStart = new Date(start_date + 'T00:00:00');
+      const dayBefore = new Date(newStart.getTime() - 86400000).toISOString().slice(0,10);
+      if(!confirm(`This unit already has an active renter. Creating this contract will close out their contract (end date set to ${dayBefore}) and make the new renter current. Continue?`)) return;
+      await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore }).eq('id', existingActive.id);
+    }
+
+    const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
+    if(error) return alert('Error: ' + error.message);
+
+    const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
+    const { data: unit } = await sb.from('units').select('unit_name').eq('id', unit_id).single();
+    showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number,
+      buildNotifyMessage('new', renter?.name||'', unit?.unit_name||'', created));
+
+    document.getElementById('cNotes').value='';
+    document.getElementById('cTerms').value = DEFAULT_TERMS;
+    ['cNewName','cNewAddress','cNewBusiness','cNewContact','cNewEmail'].forEach(id=>document.getElementById(id).value='');
   }
 
-  const { error } = await sb.from('contracts').insert(payload);
-  if(error) return alert('Error: ' + error.message);
-  document.getElementById('cNotes').value='';
-  document.getElementById('cTerms').value = DEFAULT_TERMS;
-  loadContractsTable(); loadUnitsTable(); loadPayContractSelect(); loadDashboard();
+  loadContractsTable(); loadUnitsTable(); loadPayContractSelect(); loadDashboard(); loadRenters(); loadContractCascadingData();
 }
 
 async function loadContractUnitFilterDropdown(){
@@ -502,6 +725,7 @@ async function loadContractsTable(){
       <td>${fmtDate(c.end_date)}</td>
       <td><span class="badge b-${c.status}">${c.status}</span></td>
       <td>
+        <button class="btn secondary small" onclick="startEditContract('${c.id}')">Edit</button>
         <button class="btn secondary small" onclick="printContract('${c.id}')">Print</button>
         ${c.status==='active' ? `<button class="btn danger small" onclick="cancelContract('${c.id}')">Cancel</button>` : ''}
       </td>
@@ -542,12 +766,12 @@ async function printContract(id){
       <tr><td class="label">Renter Address:</td><td>${c.renters?.address||'—'}</td></tr>
       <tr><td class="label">Contact Number:</td><td>${c.renters?.contact_number||'—'}</td></tr>
       <tr><td class="label">Unit:</td><td>${c.units?.unit_name||''}</td></tr>
-      <tr><td class="label">Monthly Rent:</td><td>${fmtMoney(c.rent_amount)}</td></tr>
+      <tr><td class="label">Rent (${c.rent_period||'monthly'}):</td><td>${fmtMoney(c.rent_amount)}</td></tr>
       <tr><td class="label">Advance:</td><td>${fmtMoney(c.advance)}</td></tr>
       <tr><td class="label">Deposit:</td><td>${fmtMoney(c.deposit)}</td></tr>
       <tr><td class="label">Start Date:</td><td>${fmtDate(c.start_date)}</td></tr>
       <tr><td class="label">End Date:</td><td>${fmtDate(c.end_date)}</td></tr>
-      <tr><td class="label">Rent Due Day:</td><td>Day ${c.rent_due_day} of each month</td></tr>
+      ${c.rent_period !== 'daily' ? `<tr><td class="label">Rent Due Day:</td><td>Day ${c.rent_due_day} of each month</td></tr>` : ''}
     </table>
     <h3>Terms &amp; Conditions</h3>
     <pre>${(c.terms_and_conditions||'').replace(/</g,'&lt;')}</pre>
