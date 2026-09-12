@@ -96,7 +96,7 @@
       <p class="section-title">Add location</p>
       <div class="row">
         <div><label>Name</label><input id="locName"></div>
-        <div><label>Address</label><input id="locAddress"></div>
+        <div><label>Address</label><input id="locAddress" list="locAddressSuggestions" oninput="onAddressTyping()" autocomplete="off" placeholder="Start typing a real address…"><datalist id="locAddressSuggestions"></datalist></div>
       </div>
       <button class="btn" onclick="addLocation()">Add Location</button>
     </div>
@@ -292,6 +292,24 @@ By signing below, both parties agree to the terms and conditions stated above.`;
 let currentUnitFilter = null;
 let editingContractId = null;
 let allLocations = [], allBuildings = [], allUnits = [];
+let addressSearchTimer = null;
+
+// Live address suggestions as you type, using OpenStreetMap's free Nominatim
+// search (no API key, no cost). You can still type any address freely —
+// this only adds real matches to pick from, it never blocks typing.
+function onAddressTyping(){
+  clearTimeout(addressSearchTimer);
+  const q = document.getElementById('locAddress').value.trim();
+  if(q.length < 4) return;
+  addressSearchTimer = setTimeout(async ()=>{
+    try{
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&addressdetails=0&countrycodes=ph&limit=6&q=${encodeURIComponent(q)}`);
+      const results = await res.json();
+      document.getElementById('locAddressSuggestions').innerHTML =
+        (results||[]).map(r=>`<option value="${r.display_name.replace(/"/g,'&quot;')}">`).join('');
+    }catch(e){ /* offline or rate-limited — typing still works fine without suggestions */ }
+  }, 400);
+}
 
 async function loadAll(){
   if(!sb) return;
@@ -457,7 +475,7 @@ async function addLocation(){
   if(!name) return alert('Name required');
   await sb.from('locations').insert({ name, address });
   document.getElementById('locName').value=''; document.getElementById('locAddress').value='';
-  loadPropertyDropdowns();
+  loadPropertyDropdowns(); loadContractCascadingData();
 }
 
 async function addBuilding(){
@@ -467,7 +485,7 @@ async function addBuilding(){
   if(!name) return alert('Name required');
   await sb.from('buildings').insert({ location_id, name, description });
   document.getElementById('bldName').value=''; document.getElementById('bldDesc').value='';
-  loadPropertyDropdowns();
+  loadPropertyDropdowns(); loadContractCascadingData();
 }
 
 async function addUnit(){
