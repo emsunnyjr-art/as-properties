@@ -125,7 +125,7 @@
     <div class="card">
       <p class="section-title">All units</p>
       <table>
-        <thead><tr><th>Unit</th><th>Building</th><th>Asking Rent</th><th>Status</th><th>Renter</th><th>Ends</th></tr></thead>
+        <thead><tr><th>Unit</th><th>Building</th><th>Asking Rent</th><th>Status</th><th>Renter</th><th>Ends</th><th></th></tr></thead>
         <tbody id="unitsTable"></tbody>
       </table>
     </div>
@@ -167,12 +167,19 @@
         <div><label>Term (months)</label><input id="cTerm" type="number" value="12"></div>
         <div><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="28"></div>
       </div>
-      <div><label>Notes</label><textarea id="cNotes" rows="2"></textarea></div>
+      <div><label>Terms &amp; Conditions</label><textarea id="cTerms" rows="10"></textarea></div>
       <button class="btn" onclick="addContract()">Create Contract</button>
-      <p class="muted">This auto-generates the full rent schedule and sets the contract end date.</p>
+      <p class="muted">This auto-generates the full rent schedule and sets the contract end date. If this unit already has an active contract, it will be closed out automatically (kept on file, not deleted) the day before this one starts.</p>
     </div>
     <div class="card">
-      <p class="section-title">All contracts</p>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+        <p class="section-title" style="margin:0;">All contracts <span class="muted" id="filterLabel"></span></p>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="contractUnitFilter" style="width:220px;margin:0;" onchange="onUnitFilterChange()"></select>
+          <button class="btn secondary small" onclick="clearUnitFilter()">Clear filter</button>
+        </div>
+      </div>
+      <p class="muted">Every past renter of a unit stays on file here for record — closing out a contract never deletes it, just marks it cancelled/expired.</p>
       <table>
         <thead><tr><th>Unit</th><th>Renter</th><th>Rent</th><th>Start</th><th>End</th><th>Status</th><th></th></tr></thead>
         <tbody id="contractsTable"></tbody>
@@ -230,10 +237,24 @@ function fmtDate(d){ return d ? new Date(d+'T00:00:00').toLocaleDateString() : '
 function telHref(num){ return 'tel:' + (num||'').replace(/[^0-9+]/g,''); }
 function smsHref(num, msg){ return 'sms:' + (num||'').replace(/[^0-9+]/g,'') + (msg ? ('?&body=' + encodeURIComponent(msg)) : ''); }
 
+const DEFAULT_TERMS = `1. TERM: This lease shall commence on the Start Date indicated above and continue for the agreed term, renewable by mutual agreement.
+2. RENT: The LESSEE agrees to pay the monthly rent stated above on or before the agreed due date each month. Late payment beyond five (5) days may incur a penalty as separately agreed by both parties.
+3. DEPOSIT & ADVANCE: The security deposit shall answer for damages to the leased premises and unpaid utility bills upon termination, subject to inspection. The advance payment shall be applied to the last month(s) of the lease term.
+4. USE OF PREMISES: The LESSEE shall use the premises solely for the disclosed business purpose and shall not sublease, assign, or use the space for any illegal purpose.
+5. MAINTENANCE: The LESSEE shall keep the premises clean and in good condition and shall be responsible for damages caused by negligence or misuse.
+6. UTILITIES: Unless otherwise agreed, the LESSEE is responsible for their own electricity, water, and other utility consumption.
+7. TERMINATION: Either party may terminate this agreement by giving thirty (30) days prior written notice. The LESSOR reserves the right to terminate immediately for non-payment of rent beyond thirty (30) days or violation of these terms.
+8. GOVERNING LAW: This agreement shall be governed by the laws of the Republic of the Philippines.
+
+By signing below, both parties agree to the terms and conditions stated above.`;
+
+let currentUnitFilter = null;
+
 async function loadAll(){
   if(!sb) return;
+  document.getElementById('cTerms').value = DEFAULT_TERMS;
   await Promise.all([loadDashboard(), loadPropertyDropdowns(), loadUnitsTable(),
-    loadRenters(), loadContractDropdowns(), loadContractsTable(), loadPayContractSelect()]);
+    loadRenters(), loadContractDropdowns(), loadContractUnitFilterDropdown(), loadContractsTable(), loadPayContractSelect()]);
 }
 
 // ---------- DASHBOARD ----------
@@ -283,6 +304,7 @@ async function loadDashboard(){
       <div>
         <a class="action" href="${telHref(r.contact_number)}">📞 Call</a>
         <a class="action" href="${smsHref(r.contact_number, msg)}">💬 SMS</a>
+        ${r.rent_payment_id ? `<button class="btn small" onclick="markReminderPaid('${r.rent_payment_id}')">✅ Mark paid</button>` : ''}
         <button class="btn secondary small" onclick="ackReminder('${r.reminder_id}')">Mark sent</button>
       </div>
     `;
@@ -292,6 +314,19 @@ async function loadDashboard(){
 
 async function ackReminder(id){
   await sb.from('reminders_log').update({ acknowledged:true, acknowledged_at:new Date().toISOString() }).eq('id', id);
+  loadDashboard();
+}
+
+// One-tap "paid in full, today" from the dashboard reminder feed.
+// This flips rent_payments.status to 'paid', which a DB trigger uses to
+// auto-clear this reminder — no separate "hide" step needed.
+async function markReminderPaid(rentPaymentId){
+  const { data: rp } = await sb.from('rent_payments').select('amount_due').eq('id', rentPaymentId).single();
+  if(!rp) return;
+  await sb.from('rent_payments').update({
+    amount_paid: rp.amount_due,
+    paid_date: new Date().toISOString().slice(0,10)
+  }).eq('id', rentPaymentId);
   loadDashboard();
 }
 
@@ -345,6 +380,7 @@ async function loadUnitsTable(){
       <td><span class="badge b-${u.occupancy}">${u.occupancy}</span></td>
       <td>${u.renter_name||'—'}</td>
       <td>${fmtDate(u.end_date)}</td>
+      <td><a class="action" href="javascript:void(0)" onclick="filterContractsByUnit('${u.unit_id}','${(u.unit_name||'').replace(/'/g,"\\'")}')">History</a></td>
     </tr>
   `).join('');
 }
@@ -397,17 +433,66 @@ async function addContract(){
     start_date: document.getElementById('cStart').value,
     term_months: parseInt(document.getElementById('cTerm').value) || 12,
     rent_due_day: parseInt(document.getElementById('cDueDay').value) || 1,
-    notes: document.getElementById('cNotes').value.trim()
+    notes: document.getElementById('cNotes').value.trim(),
+    terms_and_conditions: document.getElementById('cTerms').value
   };
   if(!payload.unit_id || !payload.renter_id || !payload.start_date) return alert('Unit, renter and start date are required');
+
+  // A unit can only have one current renter. If this unit still has an
+  // active contract, close it out (kept on file, not deleted) the day
+  // before the new one starts, so the new renter becomes "current".
+  const { data: existingActive } = await sb.from('contracts')
+    .select('id, start_date').eq('unit_id', payload.unit_id).eq('status','active').maybeSingle();
+  if(existingActive){
+    const newStart = new Date(payload.start_date + 'T00:00:00');
+    const dayBefore = new Date(newStart.getTime() - 86400000).toISOString().slice(0,10);
+    if(!confirm(`This unit already has an active renter. Creating this contract will close out their contract (end date set to ${dayBefore}) and make the new renter current. Continue?`)) return;
+    await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore }).eq('id', existingActive.id);
+  }
+
   const { error } = await sb.from('contracts').insert(payload);
   if(error) return alert('Error: ' + error.message);
   document.getElementById('cNotes').value='';
+  document.getElementById('cTerms').value = DEFAULT_TERMS;
   loadContractsTable(); loadUnitsTable(); loadPayContractSelect(); loadDashboard();
 }
 
+async function loadContractUnitFilterDropdown(){
+  const { data } = await sb.from('units').select('id, unit_name').order('unit_name');
+  document.getElementById('contractUnitFilter').innerHTML =
+    `<option value="">Filter by unit…</option>` +
+    (data||[]).map(u=>`<option value="${u.id}">${u.unit_name}</option>`).join('');
+}
+
+function onUnitFilterChange(){
+  const sel = document.getElementById('contractUnitFilter');
+  currentUnitFilter = sel.value || null;
+  document.getElementById('filterLabel').textContent = currentUnitFilter ? '— ' + sel.selectedOptions[0].textContent : '';
+  loadContractsTable();
+}
+
+function filterContractsByUnit(unitId, unitName){
+  document.querySelectorAll('#tabNav button').forEach(b=>b.classList.remove('active'));
+  document.querySelector('#tabNav button[data-tab="contracts"]').classList.add('active');
+  document.querySelectorAll('main > section').forEach(s=>s.classList.add('hidden'));
+  document.getElementById('tab-contracts').classList.remove('hidden');
+  document.getElementById('contractUnitFilter').value = unitId;
+  currentUnitFilter = unitId;
+  document.getElementById('filterLabel').textContent = '— ' + unitName;
+  loadContractsTable();
+}
+
+function clearUnitFilter(){
+  currentUnitFilter = null;
+  document.getElementById('contractUnitFilter').value = '';
+  document.getElementById('filterLabel').textContent = '';
+  loadContractsTable();
+}
+
 async function loadContractsTable(){
-  const { data } = await sb.from('contracts').select('*, units(unit_name), renters(name)').order('start_date', { ascending:false });
+  let q = sb.from('contracts').select('*, units(unit_name), renters(name)').order('start_date', { ascending:false });
+  if(currentUnitFilter) q = q.eq('unit_id', currentUnitFilter);
+  const { data } = await q;
   document.getElementById('contractsTable').innerHTML = (data||[]).map(c=>`
     <tr>
       <td>${c.units?.unit_name||'—'}</td>
@@ -416,7 +501,10 @@ async function loadContractsTable(){
       <td>${fmtDate(c.start_date)}</td>
       <td>${fmtDate(c.end_date)}</td>
       <td><span class="badge b-${c.status}">${c.status}</span></td>
-      <td>${c.status==='active' ? `<button class="btn danger small" onclick="cancelContract('${c.id}')">Cancel</button>` : ''}</td>
+      <td>
+        <button class="btn secondary small" onclick="printContract('${c.id}')">Print</button>
+        ${c.status==='active' ? `<button class="btn danger small" onclick="cancelContract('${c.id}')">Cancel</button>` : ''}
+      </td>
     </tr>
   `).join('');
 }
@@ -425,6 +513,52 @@ async function cancelContract(id){
   if(!confirm('Cancel this contract? End date will be set to today.')) return;
   await sb.from('contracts').update({ status:'cancelled', end_date: new Date().toISOString().slice(0,10) }).eq('id', id);
   loadContractsTable(); loadUnitsTable(); loadDashboard();
+}
+
+async function printContract(id){
+  const { data: c } = await sb.from('contracts')
+    .select('*, units(unit_name, buildings(name)), renters(name, business_name, address, contact_number)')
+    .eq('id', id).single();
+  if(!c) return;
+  const win = window.open('', '_blank');
+  win.document.write(`
+    <html><head><title>Lease Contract — ${c.units?.unit_name||''}</title>
+    <style>
+      body{font-family:Georgia,serif;max-width:750px;margin:40px auto;line-height:1.5;color:#111;}
+      h1{font-size:20px;text-align:center;margin-bottom:0;}
+      h2{font-size:13px;text-align:center;color:#555;font-weight:normal;margin-top:4px;}
+      table{width:100%;border-collapse:collapse;margin:20px 0;}
+      td{padding:4px 8px;vertical-align:top;}
+      td.label{color:#555;width:160px;}
+      pre{white-space:pre-wrap;font-family:Georgia,serif;font-size:13px;}
+      .sig{margin-top:60px;display:flex;justify-content:space-between;}
+      .sig div{width:45%;border-top:1px solid #333;text-align:center;padding-top:6px;font-size:13px;}
+      @media print{ .noprint{display:none;} }
+    </style></head><body>
+    <h1>Contract of Lease</h1>
+    <h2>${c.units?.buildings?.name||''} — ${c.units?.unit_name||''}</h2>
+    <table>
+      <tr><td class="label">Lessee (Renter):</td><td>${c.renters?.name||''}${c.renters?.business_name ? ' — '+c.renters.business_name : ''}</td></tr>
+      <tr><td class="label">Renter Address:</td><td>${c.renters?.address||'—'}</td></tr>
+      <tr><td class="label">Contact Number:</td><td>${c.renters?.contact_number||'—'}</td></tr>
+      <tr><td class="label">Unit:</td><td>${c.units?.unit_name||''}</td></tr>
+      <tr><td class="label">Monthly Rent:</td><td>${fmtMoney(c.rent_amount)}</td></tr>
+      <tr><td class="label">Advance:</td><td>${fmtMoney(c.advance)}</td></tr>
+      <tr><td class="label">Deposit:</td><td>${fmtMoney(c.deposit)}</td></tr>
+      <tr><td class="label">Start Date:</td><td>${fmtDate(c.start_date)}</td></tr>
+      <tr><td class="label">End Date:</td><td>${fmtDate(c.end_date)}</td></tr>
+      <tr><td class="label">Rent Due Day:</td><td>Day ${c.rent_due_day} of each month</td></tr>
+    </table>
+    <h3>Terms &amp; Conditions</h3>
+    <pre>${(c.terms_and_conditions||'').replace(/</g,'&lt;')}</pre>
+    <div class="sig">
+      <div>LESSOR</div>
+      <div>LESSEE — ${c.renters?.name||''}</div>
+    </div>
+    <p class="noprint" style="text-align:center;margin-top:30px;"><button onclick="window.print()">Print</button></p>
+    </body></html>
+  `);
+  win.document.close();
 }
 
 // ---------- PAYMENTS ----------
