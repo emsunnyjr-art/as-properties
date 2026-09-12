@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ace Properties Management</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg:#0f1720; --panel:#17212b; --panel2:#1e2a36; --border:#2a3846;
+    --text:#e7edf3; --muted:#8fa3b3; --accent:#3ea6ff; --good:#3ecf8e;
+    --warn:#f2b84b; --bad:#ef5b5b;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);}
+  header{padding:14px 18px;background:var(--panel);border-bottom:1px solid var(--border);
+    display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:5;}
+  header h1{font-size:18px;margin:0;}
+  header small{color:var(--muted);}
+  nav{display:flex;gap:4px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--border);
+    overflow-x:auto;}
+  nav button{background:none;border:none;color:var(--muted);padding:8px 14px;border-radius:8px;
+    cursor:pointer;font-size:14px;white-space:nowrap;}
+  nav button.active{background:var(--panel2);color:var(--text);font-weight:600;}
+  main{padding:16px;max-width:1100px;margin:0 auto;}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px;}
+  .stat{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;}
+  .stat .num{font-size:26px;font-weight:700;}
+  .stat .lbl{color:var(--muted);font-size:12px;margin-top:4px;}
+  table{width:100%;border-collapse:collapse;font-size:14px;}
+  th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;}
+  tr:hover td{background:rgba(255,255,255,0.02);}
+  input,select,textarea{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);
+    background:var(--panel2);color:var(--text);font-size:14px;margin-bottom:8px;}
+  label{font-size:12px;color:var(--muted);display:block;margin-bottom:2px;}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;}
+  button.btn{background:var(--accent);color:#04121e;border:none;padding:9px 16px;border-radius:8px;
+    font-weight:600;cursor:pointer;font-size:14px;}
+  button.btn.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--border);}
+  button.btn.danger{background:var(--bad);color:#fff;}
+  button.small{padding:5px 10px;font-size:12px;border-radius:6px;}
+  .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;}
+  .b-active,.b-paid,.b-occupied{background:rgba(62,207,142,.15);color:var(--good);}
+  .b-pending,.b-vacant{background:rgba(143,163,179,.15);color:var(--muted);}
+  .b-overdue,.b-expired,.b-cancelled{background:rgba(239,91,91,.15);color:var(--bad);}
+  .b-partial,.b-expiring{background:rgba(242,184,75,.15);color:var(--warn);}
+  a.action{color:var(--accent);text-decoration:none;font-size:13px;margin-right:10px;}
+  .reminder-item{display:flex;justify-content:space-between;align-items:center;padding:10px 0;
+    border-bottom:1px solid var(--border);gap:10px;flex-wrap:wrap;}
+  .reminder-item:last-child{border-bottom:none;}
+  .muted{color:var(--muted);font-size:13px;}
+  .hidden{display:none !important;}
+  .section-title{font-size:15px;font-weight:700;margin:0 0 12px 0;}
+  #configBanner{background:var(--warn);color:#221a05;padding:10px 16px;font-size:13px;}
+</style>
+</head>
+<body>
+
+<div id="configBanner" class="hidden">
+  ⚠ Set SUPABASE_URL and SUPABASE_ANON_KEY at the top of this file's &lt;script&gt; block, then re-upload.
+</div>
+
+<header>
+  <div>
+    <h1>Ace Properties Management</h1>
+    <small id="todayLabel"></small>
+  </div>
+  <button class="btn secondary small" onclick="loadAll()">Refresh</button>
+</header>
+
+<nav id="tabNav">
+  <button data-tab="dashboard" class="active">Dashboard</button>
+  <button data-tab="properties">Properties</button>
+  <button data-tab="renters">Renters</button>
+  <button data-tab="contracts">Contracts</button>
+  <button data-tab="payments">Payments</button>
+</nav>
+
+<main>
+
+  <!-- ============ DASHBOARD ============ -->
+  <section id="tab-dashboard">
+    <div class="grid" id="statGrid"></div>
+    <div class="card">
+      <p class="section-title">Needs attention</p>
+      <p class="muted" id="reminderEmpty">Nothing pending right now.</p>
+      <div id="reminderList"></div>
+    </div>
+  </section>
+
+  <!-- ============ PROPERTIES ============ -->
+  <section id="tab-properties" class="hidden">
+    <div class="card">
+      <p class="section-title">Add location</p>
+      <div class="row">
+        <div><label>Name</label><input id="locName"></div>
+        <div><label>Address</label><input id="locAddress"></div>
+      </div>
+      <button class="btn" onclick="addLocation()">Add Location</button>
+    </div>
+
+    <div class="card">
+      <p class="section-title">Add building</p>
+      <div class="row">
+        <div><label>Location</label><select id="bldLocation"></select></div>
+        <div><label>Name</label><input id="bldName"></div>
+        <div><label>Description</label><input id="bldDesc"></div>
+      </div>
+      <button class="btn" onclick="addBuilding()">Add Building</button>
+    </div>
+
+    <div class="card">
+      <p class="section-title">Add unit</p>
+      <div class="row">
+        <div><label>Building</label><select id="unitBuilding"></select></div>
+        <div><label>Unit name</label><input id="unitName"></div>
+        <div><label>Asking price / month</label><input id="unitPrice" type="number" step="0.01"></div>
+        <div><label>Description</label><input id="unitDesc"></div>
+      </div>
+      <button class="btn" onclick="addUnit()">Add Unit</button>
+    </div>
+
+    <div class="card">
+      <p class="section-title">All units</p>
+      <table>
+        <thead><tr><th>Unit</th><th>Building</th><th>Asking Rent</th><th>Status</th><th>Renter</th><th>Ends</th></tr></thead>
+        <tbody id="unitsTable"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ RENTERS ============ -->
+  <section id="tab-renters" class="hidden">
+    <div class="card">
+      <p class="section-title">Add renter</p>
+      <div class="row">
+        <div><label>Full name</label><input id="rName"></div>
+        <div><label>Business name</label><input id="rBusiness"></div>
+        <div><label>Contact number</label><input id="rContact" placeholder="+639..."></div>
+        <div><label>Email (optional)</label><input id="rEmail"></div>
+        <div><label>Address</label><input id="rAddress"></div>
+      </div>
+      <button class="btn" onclick="addRenter()">Add Renter</button>
+    </div>
+    <div class="card">
+      <p class="section-title">All renters</p>
+      <table>
+        <thead><tr><th>Name</th><th>Business</th><th>Contact</th><th>Email</th><th></th></tr></thead>
+        <tbody id="rentersTable"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ CONTRACTS ============ -->
+  <section id="tab-contracts" class="hidden">
+    <div class="card">
+      <p class="section-title">New contract</p>
+      <div class="row">
+        <div><label>Unit</label><select id="cUnit"></select></div>
+        <div><label>Renter</label><select id="cRenter"></select></div>
+        <div><label>Monthly rent</label><input id="cRent" type="number" step="0.01"></div>
+        <div><label>Advance</label><input id="cAdvance" type="number" step="0.01" value="0"></div>
+        <div><label>Deposit</label><input id="cDeposit" type="number" step="0.01" value="0"></div>
+        <div><label>Start date</label><input id="cStart" type="date"></div>
+        <div><label>Term (months)</label><input id="cTerm" type="number" value="12"></div>
+        <div><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="28"></div>
+      </div>
+      <div><label>Notes</label><textarea id="cNotes" rows="2"></textarea></div>
+      <button class="btn" onclick="addContract()">Create Contract</button>
+      <p class="muted">This auto-generates the full rent schedule and sets the contract end date.</p>
+    </div>
+    <div class="card">
+      <p class="section-title">All contracts</p>
+      <table>
+        <thead><tr><th>Unit</th><th>Renter</th><th>Rent</th><th>Start</th><th>End</th><th>Status</th><th></th></tr></thead>
+        <tbody id="contractsTable"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ PAYMENTS ============ -->
+  <section id="tab-payments" class="hidden">
+    <div class="card">
+      <p class="section-title">Select contract</p>
+      <select id="payContractSelect" onchange="loadPaymentSchedule()"></select>
+    </div>
+    <div class="card">
+      <p class="section-title">Rent schedule</p>
+      <table>
+        <thead><tr><th>Period</th><th>Due</th><th>Amount</th><th>Paid</th><th>Status</th><th></th></tr></thead>
+        <tbody id="scheduleTable"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<script>
+// =====================================================================
+// CONFIG — fill these in from your Supabase project settings
+// =====================================================================
+const SUPABASE_URL = "https://izpaskyqsozpgfgnmlqu.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_7rT5LFITgGrwZwCgy_2VMQ_nUJrxmmU";
+// =====================================================================
+
+let sb;
+if (SUPABASE_URL.includes("YOUR_SUPABASE")) {
+  document.getElementById("configBanner").classList.remove("hidden");
+} else {
+  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
+
+document.getElementById("todayLabel").textContent = new Date().toLocaleDateString(undefined,
+  { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+
+// ---------- tab nav ----------
+document.querySelectorAll('#tabNav button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('#tabNav button').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('main > section').forEach(s=>s.classList.add('hidden'));
+    document.getElementById('tab-'+btn.dataset.tab).classList.remove('hidden');
+  });
+});
+
+function fmtMoney(n){ return '₱' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}); }
+function fmtDate(d){ return d ? new Date(d+'T00:00:00').toLocaleDateString() : '—'; }
+function telHref(num){ return 'tel:' + (num||'').replace(/[^0-9+]/g,''); }
+function smsHref(num, msg){ return 'sms:' + (num||'').replace(/[^0-9+]/g,'') + (msg ? ('?&body=' + encodeURIComponent(msg)) : ''); }
+
+async function loadAll(){
+  if(!sb) return;
+  await Promise.all([loadDashboard(), loadPropertyDropdowns(), loadUnitsTable(),
+    loadRenters(), loadContractDropdowns(), loadContractsTable(), loadPayContractSelect()]);
+}
+
+// ---------- DASHBOARD ----------
+async function loadDashboard(){
+  const { data: units } = await sb.from('v_unit_status').select('*');
+  const occupied = (units||[]).filter(u=>u.occupancy==='occupied').length;
+  const vacant = (units||[]).filter(u=>u.occupancy==='vacant').length;
+
+  const { data: reminders } = await sb.from('v_open_reminders').select('*').order('target_date');
+
+  const overdueCount = (reminders||[]).filter(r=>r.reminder_type==='rent_overdue').length;
+  const expiringCount = (reminders||[]).filter(r=>r.reminder_type==='contract_expiring').length;
+
+  document.getElementById('statGrid').innerHTML = `
+    <div class="stat"><div class="num">${occupied}</div><div class="lbl">Occupied units</div></div>
+    <div class="stat"><div class="num">${vacant}</div><div class="lbl">Vacant units</div></div>
+    <div class="stat"><div class="num" style="color:var(--bad)">${overdueCount}</div><div class="lbl">Overdue rent</div></div>
+    <div class="stat"><div class="num" style="color:var(--warn)">${expiringCount}</div><div class="lbl">Contracts expiring</div></div>
+  `;
+
+  const list = document.getElementById('reminderList');
+  const empty = document.getElementById('reminderEmpty');
+  list.innerHTML = '';
+  if(!reminders || reminders.length===0){ empty.classList.remove('hidden'); return; }
+  empty.classList.add('hidden');
+
+  reminders.forEach(r=>{
+    const typeLabel = {
+      rent_due: `Rent due ${r.days_offset===0?'today':'in '+r.days_offset+' day(s)'}`,
+      rent_overdue: `Rent overdue by ${r.days_offset} day(s)`,
+      contract_expiring: `Contract ${r.days_offset===0?'ends today':'ends in '+r.days_offset+' day(s)'}`
+    }[r.reminder_type];
+    const badgeClass = r.reminder_type==='rent_overdue' ? 'b-overdue'
+      : r.reminder_type==='contract_expiring' ? 'b-expiring' : 'b-pending';
+    const msg = r.reminder_type==='contract_expiring'
+      ? `Hi ${r.renter_name}, this is a reminder that your lease for ${r.unit_name} ends on ${fmtDate(r.target_date)}. Please let us know your plans.`
+      : `Hi ${r.renter_name}, this is a reminder that rent of ${fmtMoney(r.amount_due)} for ${r.unit_name} was due ${fmtDate(r.target_date)}. Kindly settle at your earliest convenience.`;
+
+    const div = document.createElement('div');
+    div.className = 'reminder-item';
+    div.innerHTML = `
+      <div>
+        <span class="badge ${badgeClass}">${typeLabel}</span><br>
+        <strong>${r.renter_name}</strong> — ${r.unit_name}${r.building_name ? ' ('+r.building_name+')' : ''}
+        <div class="muted">${r.reminder_type==='contract_expiring' ? 'Ends' : 'Due'}: ${fmtDate(r.target_date)}${r.amount_due ? ' • '+fmtMoney(r.amount_due) : ''}</div>
+      </div>
+      <div>
+        <a class="action" href="${telHref(r.contact_number)}">📞 Call</a>
+        <a class="action" href="${smsHref(r.contact_number, msg)}">💬 SMS</a>
+        <button class="btn secondary small" onclick="ackReminder('${r.reminder_id}')">Mark sent</button>
+      </div>
+    `;
+    list.appendChild(div);
+  });
+}
+
+async function ackReminder(id){
+  await sb.from('reminders_log').update({ acknowledged:true, acknowledged_at:new Date().toISOString() }).eq('id', id);
+  loadDashboard();
+}
+
+// ---------- PROPERTIES ----------
+async function loadPropertyDropdowns(){
+  const { data: locs } = await sb.from('locations').select('*').order('name');
+  document.getElementById('bldLocation').innerHTML = (locs||[]).map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
+
+  const { data: blds } = await sb.from('buildings').select('*').order('name');
+  document.getElementById('unitBuilding').innerHTML = (blds||[]).map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
+}
+
+async function addLocation(){
+  const name = document.getElementById('locName').value.trim();
+  const address = document.getElementById('locAddress').value.trim();
+  if(!name) return alert('Name required');
+  await sb.from('locations').insert({ name, address });
+  document.getElementById('locName').value=''; document.getElementById('locAddress').value='';
+  loadPropertyDropdowns();
+}
+
+async function addBuilding(){
+  const location_id = document.getElementById('bldLocation').value;
+  const name = document.getElementById('bldName').value.trim();
+  const description = document.getElementById('bldDesc').value.trim();
+  if(!name) return alert('Name required');
+  await sb.from('buildings').insert({ location_id, name, description });
+  document.getElementById('bldName').value=''; document.getElementById('bldDesc').value='';
+  loadPropertyDropdowns();
+}
+
+async function addUnit(){
+  const building_id = document.getElementById('unitBuilding').value;
+  const unit_name = document.getElementById('unitName').value.trim();
+  const price = parseFloat(document.getElementById('unitPrice').value) || 0;
+  const description = document.getElementById('unitDesc').value.trim();
+  if(!unit_name) return alert('Unit name required');
+  await sb.from('units').insert({ building_id, unit_name, price, description });
+  document.getElementById('unitName').value=''; document.getElementById('unitPrice').value='';
+  document.getElementById('unitDesc').value='';
+  loadUnitsTable(); loadContractDropdowns();
+}
+
+async function loadUnitsTable(){
+  const { data } = await sb.from('v_unit_status').select('*').order('unit_name');
+  document.getElementById('unitsTable').innerHTML = (data||[]).map(u=>`
+    <tr>
+      <td>${u.unit_name}</td>
+      <td>${u.building_name||'—'}</td>
+      <td>${fmtMoney(u.rent_amount || 0)}</td>
+      <td><span class="badge b-${u.occupancy}">${u.occupancy}</span></td>
+      <td>${u.renter_name||'—'}</td>
+      <td>${fmtDate(u.end_date)}</td>
+    </tr>
+  `).join('');
+}
+
+// ---------- RENTERS ----------
+async function addRenter(){
+  const name = document.getElementById('rName').value.trim();
+  const business_name = document.getElementById('rBusiness').value.trim();
+  const contact_number = document.getElementById('rContact').value.trim();
+  const email = document.getElementById('rEmail').value.trim();
+  const address = document.getElementById('rAddress').value.trim();
+  if(!name) return alert('Name required');
+  await sb.from('renters').insert({ name, business_name, contact_number, email, address });
+  ['rName','rBusiness','rContact','rEmail','rAddress'].forEach(id=>document.getElementById(id).value='');
+  loadRenters(); loadContractDropdowns();
+}
+
+async function loadRenters(){
+  const { data } = await sb.from('renters').select('*').order('name');
+  document.getElementById('rentersTable').innerHTML = (data||[]).map(r=>`
+    <tr>
+      <td>${r.name}</td><td>${r.business_name||'—'}</td><td>${r.contact_number||'—'}</td><td>${r.email||'—'}</td>
+      <td>
+        <a class="action" href="${telHref(r.contact_number)}">📞</a>
+        <a class="action" href="${smsHref(r.contact_number)}">💬</a>
+      </td>
+    </tr>
+  `).join('');
+}
+
+// ---------- CONTRACTS ----------
+async function loadContractDropdowns(){
+  const { data: units } = await sb.from('units').select('id, unit_name, price').order('unit_name');
+  const unitSel = document.getElementById('cUnit');
+  unitSel.innerHTML = (units||[]).map(u=>`<option value="${u.id}" data-price="${u.price}">${u.unit_name}</option>`).join('');
+  unitSel.onchange = ()=>{ document.getElementById('cRent').value = unitSel.selectedOptions[0]?.dataset.price || ''; };
+  if(units && units[0]) document.getElementById('cRent').value = units[0].price;
+
+  const { data: renters } = await sb.from('renters').select('id, name').order('name');
+  document.getElementById('cRenter').innerHTML = (renters||[]).map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+}
+
+async function addContract(){
+  const payload = {
+    unit_id: document.getElementById('cUnit').value,
+    renter_id: document.getElementById('cRenter').value,
+    rent_amount: parseFloat(document.getElementById('cRent').value) || 0,
+    advance: parseFloat(document.getElementById('cAdvance').value) || 0,
+    deposit: parseFloat(document.getElementById('cDeposit').value) || 0,
+    start_date: document.getElementById('cStart').value,
+    term_months: parseInt(document.getElementById('cTerm').value) || 12,
+    rent_due_day: parseInt(document.getElementById('cDueDay').value) || 1,
+    notes: document.getElementById('cNotes').value.trim()
+  };
+  if(!payload.unit_id || !payload.renter_id || !payload.start_date) return alert('Unit, renter and start date are required');
+  const { error } = await sb.from('contracts').insert(payload);
+  if(error) return alert('Error: ' + error.message);
+  document.getElementById('cNotes').value='';
+  loadContractsTable(); loadUnitsTable(); loadPayContractSelect(); loadDashboard();
+}
+
+async function loadContractsTable(){
+  const { data } = await sb.from('contracts').select('*, units(unit_name), renters(name)').order('start_date', { ascending:false });
+  document.getElementById('contractsTable').innerHTML = (data||[]).map(c=>`
+    <tr>
+      <td>${c.units?.unit_name||'—'}</td>
+      <td>${c.renters?.name||'—'}</td>
+      <td>${fmtMoney(c.rent_amount)}</td>
+      <td>${fmtDate(c.start_date)}</td>
+      <td>${fmtDate(c.end_date)}</td>
+      <td><span class="badge b-${c.status}">${c.status}</span></td>
+      <td>${c.status==='active' ? `<button class="btn danger small" onclick="cancelContract('${c.id}')">Cancel</button>` : ''}</td>
+    </tr>
+  `).join('');
+}
+
+async function cancelContract(id){
+  if(!confirm('Cancel this contract? End date will be set to today.')) return;
+  await sb.from('contracts').update({ status:'cancelled', end_date: new Date().toISOString().slice(0,10) }).eq('id', id);
+  loadContractsTable(); loadUnitsTable(); loadDashboard();
+}
+
+// ---------- PAYMENTS ----------
+async function loadPayContractSelect(){
+  const { data } = await sb.from('contracts').select('id, start_date, units(unit_name), renters(name)').eq('status','active').order('start_date', { ascending:false });
+  document.getElementById('payContractSelect').innerHTML = (data||[]).map(c=>`<option value="${c.id}">${c.units?.unit_name} — ${c.renters?.name}</option>`).join('');
+  if(data && data.length) loadPaymentSchedule();
+}
+
+async function loadPaymentSchedule(){
+  const contractId = document.getElementById('payContractSelect').value;
+  if(!contractId){ document.getElementById('scheduleTable').innerHTML=''; return; }
+  const { data } = await sb.from('rent_payments').select('*').eq('contract_id', contractId).order('due_date');
+  document.getElementById('scheduleTable').innerHTML = (data||[]).map(p=>`
+    <tr>
+      <td>${fmtDate(p.period_start)} – ${fmtDate(p.period_end)}</td>
+      <td>${fmtDate(p.due_date)}</td>
+      <td>${fmtMoney(p.amount_due)}</td>
+      <td>${fmtMoney(p.amount_paid)}</td>
+      <td><span class="badge b-${p.status}">${p.status}</span></td>
+      <td>${p.status!=='paid' ? `<button class="btn small" onclick="recordPayment('${p.id}', ${p.amount_due})">Record payment</button>` : ''}</td>
+    </tr>
+  `).join('');
+}
+
+async function recordPayment(id, amountDue){
+  const amt = prompt('Amount paid:', amountDue);
+  if(amt===null) return;
+  await sb.from('rent_payments').update({
+    amount_paid: parseFloat(amt) || 0,
+    paid_date: new Date().toISOString().slice(0,10)
+  }).eq('id', id);
+  loadPaymentSchedule(); loadDashboard();
+}
+
+// ---------- init ----------
+if(sb) loadAll();
+</script>
+</body>
+</html>
