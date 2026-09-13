@@ -262,6 +262,11 @@
       <div><label>Notes</label><textarea id="cNotes" rows="2"></textarea></div>
       <div><label>Terms &amp; Conditions</label><textarea id="cTerms" rows="10"></textarea></div>
 
+      <div><label>Attach scanned/signed contract (PDF or photo, optional)</label>
+        <input id="cSignedFile" type="file" accept=".pdf,image/*">
+        <p class="muted" id="cSignedFileCurrent" style="margin:2px 0 8px 0;"></p>
+      </div>
+
       <button class="btn" id="contractSubmitBtn" onclick="saveContract()">Create Contract</button>
       <button class="btn secondary hidden" id="cancelEditBtn" onclick="cancelEditContract()">Cancel edit</button>
       <p class="muted">Creating a new contract for a unit that already has an active one closes the old one out automatically (kept on file, not deleted) the day before this one starts. Editing an existing contract only regenerates the schedule going forward — anything already paid stays untouched.</p>
@@ -1172,6 +1177,8 @@ async function startEditContract(id){
   document.getElementById('cDueDay').value = c.rent_due_day || 1;
   document.getElementById('cNotes').value = c.notes || '';
   document.getElementById('cTerms').value = c.terms_and_conditions || DEFAULT_TERMS;
+  document.getElementById('cSignedFile').value = '';
+  document.getElementById('cSignedFileCurrent').textContent = c.signed_file_name ? `Current file: ${c.signed_file_name} (choose a new file to replace it)` : 'No file attached yet.';
 
   document.querySelector('#tab-contracts').scrollIntoView({behavior:'smooth'});
 }
@@ -1184,6 +1191,25 @@ function cancelEditContract(){
   document.getElementById('renterMode').value = 'new';
   onRenterModeChange();
   document.getElementById('cTerms').value = DEFAULT_TERMS;
+  document.getElementById('cSignedFile').value = '';
+  document.getElementById('cSignedFileCurrent').textContent = '';
+}
+
+async function uploadSignedFileIfSelected(contractId){
+  const fileInput = document.getElementById('cSignedFile');
+  const file = fileInput.files[0];
+  if(!file) return;
+  const path = `${contractId}/${Date.now()}-${file.name}`;
+  const { error: upErr } = await sb.storage.from('contract-files').upload(path, file, { upsert: true });
+  if(upErr){ alert('File upload failed: ' + upErr.message); return; }
+  await sb.from('contracts').update({ signed_file_path: path, signed_file_name: file.name }).eq('id', contractId);
+  fileInput.value = '';
+}
+
+async function viewContractFile(path){
+  const { data, error } = await sb.storage.from('contract-files').createSignedUrl(path, 3600);
+  if(error) return alert('Could not open file: ' + error.message);
+  window.open(data.signedUrl, '_blank');
 }
 
 async function saveContract(){
@@ -1233,6 +1259,7 @@ async function saveContract(){
     const { error } = await sb.from('contracts').update(payload).eq('id', editingContractId);
     if(error) return alert('Error: ' + error.message);
     await sb.rpc('regenerate_schedule_from_today', { p_contract_id: editingContractId });
+    await uploadSignedFileIfSelected(editingContractId);
 
     const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
     const { data: unit } = await sb.from('units').select('unit_name').eq('id', unit_id).single();
@@ -1256,6 +1283,7 @@ async function saveContract(){
 
     const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
     if(error) return alert('Error: ' + error.message);
+    await uploadSignedFileIfSelected(created.id);
 
     const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
     const { data: unit } = await sb.from('units').select('unit_name').eq('id', unit_id).single();
@@ -1264,6 +1292,8 @@ async function saveContract(){
 
     document.getElementById('cNotes').value='';
     document.getElementById('cTerms').value = DEFAULT_TERMS;
+    document.getElementById('cSignedFile').value = '';
+    document.getElementById('cSignedFileCurrent').textContent = '';
     ['cNewName','cNewAddress','cNewBusiness','cNewContact','cNewEmail'].forEach(id=>document.getElementById(id).value='');
   }
 
@@ -1317,6 +1347,7 @@ async function loadContractsTable(){
       <td>
         <button class="btn secondary small" onclick="startEditContract('${c.id}')">Edit</button>
         <button class="btn secondary small" onclick="printContract('${c.id}')">Print</button>
+        ${c.signed_file_path ? `<button class="btn secondary small" onclick="viewContractFile('${c.signed_file_path}')">📄 File</button>` : ''}
         ${c.status==='active' ? `<button class="btn danger small" onclick="cancelContract('${c.id}')">Cancel</button>` : ''}
       </td>
     </tr>
