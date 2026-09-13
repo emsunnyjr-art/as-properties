@@ -816,6 +816,7 @@ async function startEditLocation(id){
   document.getElementById('locFormTitle').textContent = 'Editing location';
   document.getElementById('locSubmitBtn').textContent = 'Update Location';
   document.getElementById('cancelLocEditBtn').classList.remove('hidden');
+  document.getElementById('locFormTitle').scrollIntoView({behavior:'smooth'});
 }
 
 function cancelEditLocation(){
@@ -851,6 +852,7 @@ async function startEditBuilding(id){
   document.getElementById('bldFormTitle').textContent = 'Editing building';
   document.getElementById('bldSubmitBtn').textContent = 'Update Building';
   document.getElementById('cancelBldEditBtn').classList.remove('hidden');
+  document.getElementById('bldFormTitle').scrollIntoView({behavior:'smooth'});
 }
 
 function cancelEditBuilding(){
@@ -1044,6 +1046,7 @@ async function startEditRenter(id){
   document.getElementById('renterFormTitle').textContent = 'Editing renter';
   document.getElementById('renterSubmitBtn').textContent = 'Update Renter';
   document.getElementById('cancelRenterEditBtn').classList.remove('hidden');
+  document.getElementById('renterFormTitle').scrollIntoView({behavior:'smooth'});
 }
 
 function cancelEditRenter(){
