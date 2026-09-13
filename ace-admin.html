@@ -1532,7 +1532,7 @@ async function printContract(id){
   document.getElementById('previewFrame').srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
 
   const { data: c, error: fetchErr } = await sb.from('contracts')
-    .select('*, units(unit_name, buildings(name, locations(address))), renters(name, business_name, address, contact_number)')
+    .select('*, units!unit_id(unit_name, buildings(name, locations(address))), renters(name, business_name, address, contact_number)')
     .eq('id', id).single();
   if(fetchErr || !c){
     document.getElementById('previewTitle').textContent = 'Preview failed';
@@ -1661,7 +1661,7 @@ async function printContract(id){
 
 // ---------- PAYMENTS ----------
 async function loadPayContractSelect(){
-  const { data } = await sb.from('contracts').select('id, start_date, units(unit_name), renters(name)').eq('status','active').order('start_date', { ascending:false });
+  const { data } = await sb.from('contracts').select('id, start_date, units!unit_id(unit_name), renters(name)').eq('status','active').order('start_date', { ascending:false });
   document.getElementById('payContractSelect').innerHTML = (data||[]).map(c=>`<option value="${c.id}">${c.units?.unit_name} — ${c.renters?.name}</option>`).join('');
   if(data && data.length) loadPaymentSchedule();
 }
