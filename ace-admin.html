@@ -1532,10 +1532,19 @@ async function printContract(id){
   }
   win.document.title = 'Loading contract…';
 
-  const { data: c } = await sb.from('contracts')
+  const { data: c, error: fetchErr } = await sb.from('contracts')
     .select('*, units(unit_name, buildings(name, locations(address))), renters(name, business_name, address, contact_number)')
     .eq('id', id).single();
-  if(!c){ win.close(); return; }
+  if(fetchErr || !c){
+    win.document.title = 'Preview failed';
+    win.location.href = 'data:text/html,' + encodeURIComponent(
+      `<body style="font-family:sans-serif;padding:40px;">
+         <h2>Could not load this contract</h2>
+         <p>${fetchErr ? (fetchErr.message || JSON.stringify(fetchErr)) : 'No contract data returned.'}</p>
+       </body>`
+    );
+    return;
+  }
 
   const { data: cus } = await sb.from('contract_units')
     .select('units(unit_name)')
