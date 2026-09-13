@@ -1196,6 +1196,13 @@ function cancelEditContract(){
   document.getElementById('cTerms').value = DEFAULT_TERMS;
   document.getElementById('cSignedFile').value = '';
   document.getElementById('cSignedFileCurrent').textContent = '';
+
+  // Editing narrows Location/Building to that one contract's unit — reset
+  // back to "All" so every unit is selectable again for the next contract.
+  document.getElementById('cLocation').value = '';
+  document.getElementById('cBuilding').value = '';
+  populateBuildingDropdown();
+  populateUnitDropdown();
 }
 
 async function uploadSignedFileIfSelected(contractId){
