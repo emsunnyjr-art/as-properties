@@ -215,7 +215,11 @@
       <div class="row">
         <div><label>Location</label><select id="cLocation" onchange="onLocationChange()"></select></div>
         <div><label>Building</label><select id="cBuilding" onchange="onBuildingChange()"></select></div>
-        <div><label>Unit</label><select id="cUnit" onchange="onUnitChange()"></select></div>
+      </div>
+
+      <div style="margin-top:8px;">
+        <label>Unit(s) — tick more than one for a combined lease (one business renting several units together)</label>
+        <div id="cUnitChecklist" style="max-height:160px;overflow-y:auto;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px;"></div>
       </div>
 
       <div class="row" style="margin-top:8px;">
@@ -477,6 +481,8 @@ function populateBuildingDropdown(){
     `<option value="">All buildings</option>` + list.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
 }
 
+let pendingUnitSelection = null;
+
 function populateUnitDropdown(){
   const bldId = document.getElementById('cBuilding').value;
   let list = allUnits;
@@ -488,17 +494,32 @@ function populateUnitDropdown(){
       list = list.filter(u=>bldIds.has(u.building_id));
     }
   }
-  const unitSel = document.getElementById('cUnit');
-  unitSel.innerHTML = list.map(u=>`<option value="${u.id}" data-price="${u.price}">${u.unit_name}</option>`).join('');
+  const checkedSet = new Set(pendingUnitSelection || []);
+  pendingUnitSelection = null;
+  const container = document.getElementById('cUnitChecklist');
+  container.innerHTML = list.map(u=>`
+    <label style="display:flex;align-items:center;gap:8px;padding:4px 0;margin:0;font-size:14px;font-weight:normal;color:var(--text);">
+      <input type="checkbox" value="${u.id}" data-price="${u.price}" onchange="onUnitChange()" ${checkedSet.has(u.id)?'checked':''}>
+      ${u.unit_name}
+    </label>
+  `).join('') || '<span class="muted">No units in this filter.</span>';
   onUnitChange();
+}
+
+function getSelectedUnitIds(){
+  return Array.from(document.querySelectorAll('#cUnitChecklist input[type="checkbox"]:checked')).map(cb=>cb.value);
 }
 
 function onLocationChange(){ populateBuildingDropdown(); populateUnitDropdown(); }
 function onBuildingChange(){ populateUnitDropdown(); }
 function onUnitChange(){
-  const unitSel = document.getElementById('cUnit');
-  const price = unitSel.selectedOptions[0]?.dataset.price;
-  if(price !== undefined) document.getElementById('cRent').value = price;
+  // Sum the asking price of every ticked unit as a helpful starting figure
+  // for the combined rent — fully editable, since a negotiated combined
+  // rate rarely equals the plain sum of individual asking prices.
+  const checked = document.querySelectorAll('#cUnitChecklist input[type="checkbox"]:checked');
+  if(checked.length === 0) return;
+  const total = Array.from(checked).reduce((sum, cb)=> sum + (parseFloat(cb.dataset.price)||0), 0);
+  document.getElementById('cRent').value = total;
 }
 
 function onRenterModeChange(){
@@ -949,6 +970,16 @@ async function showUnitDetail(unitId){
   const { data: utils } = await sb.from('utilities').select('*').eq('unit_id', unitId).order('billing_month', { ascending:false }).limit(6);
   const { data: history } = await sb.from('v_unit_rate_history').select('*').eq('unit_id', unitId).order('start_date');
 
+  let combinedNote = '';
+  if(u.active_contract_id && u.other_units_in_same_contract > 0){
+    const { data: siblings } = await sb.from('contract_units')
+      .select('units(unit_name)').eq('contract_id', u.active_contract_id).neq('unit_id', unitId);
+    const names = (siblings||[]).map(s=>s.units?.unit_name).filter(Boolean).join(', ');
+    combinedNote = `<p class="muted" style="background:rgba(62,166,255,.1);padding:8px 10px;border-radius:8px;">
+      This unit is part of a combined lease with <strong>${names}</strong> — the rate, advance, and deposit shown below are the combined total for all of them together, not this unit alone.
+    </p>`;
+  }
+
   const panel = document.getElementById('unitDetailPanel');
   panel.innerHTML = `
     <div class="card" style="border-color:var(--accent);">
@@ -959,6 +990,8 @@ async function showUnitDetail(unitId){
         </div>
         <button class="btn secondary small" onclick="document.getElementById('unitDetailPanel').innerHTML=''">Dismiss</button>
       </div>
+
+      ${combinedNote}
 
       <div class="grid" style="margin:14px 0;">
         <div class="stat"><div class="num" style="font-size:18px;">${u.renter_name || 'Vacant'}</div><div class="lbl">Current renter</div></div>
@@ -1117,7 +1150,16 @@ async function showRenterDetail(renterId){
   const { data: units } = await sb.from('v_renter_units').select('*').eq('renter_id', renterId);
   const { data: rev } = await sb.from('v_renter_revenue').select('*').eq('renter_id', renterId).maybeSingle();
 
-  const activeUnits = (units||[]).filter(u=>u.status==='active');
+  // Group by contract — a combined lease (several units, one contract)
+  // should read as one line, not N duplicate-looking rows.
+  const byContract = {};
+  (units||[]).forEach(u=>{
+    if(!byContract[u.contract_id]) byContract[u.contract_id] = { ...u, unit_names: [] };
+    byContract[u.contract_id].unit_names.push(u.unit_name + (u.building_name ? ' ('+u.building_name+')' : ''));
+  });
+  const contractRows = Object.values(byContract);
+  const activeContracts = contractRows.filter(c=>c.status==='active');
+
   const panel = document.getElementById('renterDetailPanel');
   panel.innerHTML = `
     <div class="card" style="border-color:var(--accent);">
@@ -1130,18 +1172,18 @@ async function showRenterDetail(renterId){
       </div>
 
       <div class="grid" style="margin:14px 0;">
-        <div class="stat"><div class="num" style="font-size:18px;">${activeUnits.length}</div><div class="lbl">Units currently held</div></div>
-        <div class="stat"><div class="num" style="font-size:18px;">${(units||[]).length}</div><div class="lbl">Total contracts on file</div></div>
+        <div class="stat"><div class="num" style="font-size:18px;">${activeContracts.reduce((n,c)=>n+c.unit_names.length,0)}</div><div class="lbl">Units currently held</div></div>
+        <div class="stat"><div class="num" style="font-size:18px;">${contractRows.length}</div><div class="lbl">Total contracts on file</div></div>
         <div class="stat"><div class="num" style="font-size:18px;color:var(--good);">${fmtMoney(rev?.total_revenue||0)}</div><div class="lbl">Total paid, all time</div></div>
       </div>
 
       <p class="section-title">Units (current &amp; past)</p>
       <table>
-        <thead><tr><th>Unit</th><th>Rent</th><th>Advance</th><th>Deposit</th><th>Start</th><th>End</th><th>Status</th></tr></thead>
+        <thead><tr><th>Unit(s)</th><th>Rent</th><th>Advance</th><th>Deposit</th><th>Start</th><th>End</th><th>Status</th></tr></thead>
         <tbody>
-          ${(units||[]).map(u=>`
+          ${contractRows.map(u=>`
             <tr>
-              <td>${u.unit_name}${u.building_name ? ' ('+u.building_name+')' : ''}</td>
+              <td>${u.unit_names.join(', ')}</td>
               <td>${fmtMoney(u.rent_amount)} <span class="muted">/${u.rent_period}</span></td>
               <td>${fmtMoney(u.advance)}</td>
               <td>${fmtMoney(u.deposit)}</td>
@@ -1203,21 +1245,36 @@ function showNotifyPanel(renterName, email, contact, message){
 }
 
 async function startEditContract(id){
-  const { data: c } = await sb.from('contracts')
-    .select('*, units(id, unit_name, building_id, buildings(id, location_id)), renters(id, name)')
-    .eq('id', id).single();
+  const { data: c } = await sb.from('contracts').select('*, renters(id, name)').eq('id', id).single();
   if(!c) return;
   editingContractId = id;
 
-  document.getElementById('contractFormTitle').textContent = `Editing contract — ${c.units?.unit_name||''}`;
+  const { data: cus } = await sb.from('contract_units')
+    .select('unit_id, units(unit_name, building_id, buildings(location_id))')
+    .eq('contract_id', id);
+  const unitIds = (cus||[]).map(x=>x.unit_id);
+  const unitNames = (cus||[]).map(x=>x.units?.unit_name).filter(Boolean).join(', ');
+  const buildingIds = new Set((cus||[]).map(x=>x.units?.building_id).filter(Boolean));
+
+  document.getElementById('contractFormTitle').textContent = `Editing contract — ${unitNames || '(unit removed)'}`;
   document.getElementById('contractSubmitBtn').textContent = 'Update Contract';
   document.getElementById('cancelEditBtn').classList.remove('hidden');
 
-  document.getElementById('cLocation').value = c.units?.buildings?.location_id || '';
-  populateBuildingDropdown();
-  document.getElementById('cBuilding').value = c.units?.building_id || '';
+  if(buildingIds.size === 1){
+    // All selected units share one building — narrow the filter for convenience
+    const singleBuildingId = [...buildingIds][0];
+    document.getElementById('cLocation').value = cus[0]?.units?.buildings?.location_id || '';
+    populateBuildingDropdown();
+    document.getElementById('cBuilding').value = singleBuildingId;
+  } else {
+    // Spans multiple buildings, or none found — show everything so no
+    // currently-selected unit is hidden by the filter during edit.
+    document.getElementById('cLocation').value = '';
+    populateBuildingDropdown();
+    document.getElementById('cBuilding').value = '';
+  }
+  pendingUnitSelection = unitIds;
   populateUnitDropdown();
-  document.getElementById('cUnit').value = c.unit_id;
 
   document.getElementById('renterMode').value = 'existing';
   onRenterModeChange();
@@ -1253,10 +1310,11 @@ function cancelEditContract(){
   document.getElementById('cSignedFile').value = '';
   document.getElementById('cSignedFileCurrent').textContent = '';
 
-  // Editing narrows Location/Building to that one contract's unit — reset
+  // Editing narrows Location/Building to that contract's unit(s) — reset
   // back to "All" so every unit is selectable again for the next contract.
   document.getElementById('cLocation').value = '';
   document.getElementById('cBuilding').value = '';
+  pendingUnitSelection = null;
   populateBuildingDropdown();
   populateUnitDropdown();
 }
@@ -1280,8 +1338,8 @@ async function viewContractFile(path){
 
 async function saveContract(){
   const rentPeriod = document.getElementById('cRentPeriod').value;
-  const unit_id = document.getElementById('cUnit').value;
-  if(!unit_id) return alert('Select a unit');
+  const unitIds = getSelectedUnitIds();
+  if(unitIds.length === 0) return alert('Select at least one unit');
 
   // Resolve renter: existing selection, or create a new renter record first
   let renter_id;
@@ -1307,7 +1365,8 @@ async function saveContract(){
   const termValue = parseInt(document.getElementById('cTerm').value) || 1;
 
   const payload = {
-    unit_id, renter_id,
+    unit_id: unitIds[0], // primary unit — kept for backward-compatible display; contract_units below is the real source of truth
+    renter_id,
     rent_amount: parseFloat(document.getElementById('cRent').value) || 0,
     advance: parseFloat(document.getElementById('cAdvance').value) || 0,
     deposit: parseFloat(document.getElementById('cDeposit').value) || 0,
@@ -1321,40 +1380,49 @@ async function saveContract(){
     terms_and_conditions: document.getElementById('cTerms').value
   };
 
+  const { data: unitRows } = await sb.from('units').select('id, unit_name').in('id', unitIds);
+  const unitNamesJoined = (unitRows||[]).map(u=>u.unit_name).join(', ');
+
   if(editingContractId){
     const { error } = await sb.from('contracts').update(payload).eq('id', editingContractId);
     if(error) return alert('Error: ' + error.message);
     await sb.rpc('regenerate_schedule_from_today', { p_contract_id: editingContractId });
     await uploadSignedFileIfSelected(editingContractId);
 
+    // Sync which units this contract covers
+    await sb.from('contract_units').delete().eq('contract_id', editingContractId);
+    await sb.from('contract_units').insert(unitIds.map(uid=>({ contract_id: editingContractId, unit_id: uid })));
+
     const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
-    const { data: unit } = await sb.from('units').select('unit_name').eq('id', unit_id).single();
     const { data: fresh } = await sb.from('contracts').select('*').eq('id', editingContractId).single();
     showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number,
-      buildNotifyMessage('update', renter?.name||'', unit?.unit_name||'', fresh));
+      buildNotifyMessage('update', renter?.name||'', unitNamesJoined, fresh));
 
     cancelEditContract();
   } else {
-    // A unit can only have one current renter. If it already has an active
-    // contract, close it out (kept on file, not deleted) the day before
-    // this one starts, so the new renter becomes "current".
-    const { data: existingActive } = await sb.from('contracts')
-      .select('id').eq('unit_id', unit_id).eq('status','active').maybeSingle();
-    if(existingActive){
+    // A unit can only have one current renter. Any of the selected units
+    // might already have its own active contract (possibly different ones
+    // if combining previously-separate units) — close all of them out,
+    // kept on file, not deleted, the day before this one starts.
+    const { data: existingActiveRows } = await sb.from('contracts')
+      .select('id, unit_id').in('unit_id', unitIds).eq('status','active');
+    const distinctActiveIds = [...new Set((existingActiveRows||[]).map(r=>r.id))];
+    if(distinctActiveIds.length > 0){
       const newStart = new Date(start_date + 'T00:00:00');
       const dayBefore = new Date(newStart.getTime() - 86400000).toISOString().slice(0,10);
-      if(!confirm(`This unit already has an active renter. Creating this contract will close out their contract (end date set to ${dayBefore}) and make the new renter current. Continue?`)) return;
-      await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore }).eq('id', existingActive.id);
+      const plural = distinctActiveIds.length > 1 ? 'contracts' : 'contract';
+      if(!confirm(`${distinctActiveIds.length} existing active ${plural} on the selected unit(s) will be closed out (end date set to ${dayBefore}) and this new one will become current. Continue?`)) return;
+      await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore }).in('id', distinctActiveIds);
     }
 
     const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
     if(error) return alert('Error: ' + error.message);
     await uploadSignedFileIfSelected(created.id);
+    await sb.from('contract_units').insert(unitIds.map(uid=>({ contract_id: created.id, unit_id: uid })));
 
     const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
-    const { data: unit } = await sb.from('units').select('unit_name').eq('id', unit_id).single();
     showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number,
-      buildNotifyMessage('new', renter?.name||'', unit?.unit_name||'', created));
+      buildNotifyMessage('new', renter?.name||'', unitNamesJoined, created));
 
     document.getElementById('cNotes').value='';
     document.getElementById('cTerms').value = DEFAULT_TERMS;
@@ -1399,12 +1467,33 @@ function clearUnitFilter(){
 }
 
 async function loadContractsTable(){
-  let q = sb.from('contracts').select('*, units(unit_name), renters(name)').order('start_date', { ascending:false });
-  if(currentUnitFilter) q = q.eq('unit_id', currentUnitFilter);
+  let contractIdFilter = null;
+  if(currentUnitFilter){
+    const { data: cuRows } = await sb.from('contract_units').select('contract_id').eq('unit_id', currentUnitFilter);
+    contractIdFilter = (cuRows||[]).map(r=>r.contract_id);
+    if(contractIdFilter.length === 0){
+      document.getElementById('contractsTable').innerHTML = '<tr><td colspan="7" class="muted">No contracts for this unit.</td></tr>';
+      return;
+    }
+  }
+
+  let q = sb.from('contracts').select('*, renters(name)').order('start_date', { ascending:false });
+  if(contractIdFilter) q = q.in('id', contractIdFilter);
   const { data } = await q;
+
+  // Fetch all covered units for every contract in one go, for display
+  const contractIds = (data||[]).map(c=>c.id);
+  const { data: cuAll } = contractIds.length
+    ? await sb.from('contract_units').select('contract_id, units(unit_name)').in('contract_id', contractIds)
+    : { data: [] };
+  const unitNamesByContract = {};
+  (cuAll||[]).forEach(r=>{
+    (unitNamesByContract[r.contract_id] ||= []).push(r.units?.unit_name);
+  });
+
   document.getElementById('contractsTable').innerHTML = (data||[]).map(c=>`
     <tr>
-      <td>${c.units?.unit_name||'—'}</td>
+      <td>${(unitNamesByContract[c.id]||[]).filter(Boolean).join(', ') || '—'}</td>
       <td>${c.renters?.name||'—'}</td>
       <td>${fmtMoney(c.rent_amount)}</td>
       <td>${fmtDate(c.start_date)}</td>
@@ -1432,12 +1521,19 @@ async function printContract(id){
     .eq('id', id).single();
   if(!c) return;
 
+  const { data: cus } = await sb.from('contract_units')
+    .select('units(unit_name)')
+    .eq('contract_id', id);
+  const allUnitNames = (cus||[]).map(x=>x.units?.unit_name).filter(Boolean);
+
   const renterName = c.renters?.name || '';
   const renterAddress = c.renters?.address || '________________________';
-  const unitName = c.units?.unit_name || '';
   const buildingName = c.units?.buildings?.name || '';
   const locationAddress = c.units?.buildings?.locations?.address || '';
-  const premisesDesc = [unitName, buildingName ? `of the property known as ${buildingName}` : '', locationAddress ? `located at ${locationAddress}` : '']
+  const unitsDesc = allUnitNames.length > 1
+    ? (allUnitNames.slice(0,-1).join(', ') + ' and ' + allUnitNames.slice(-1))
+    : (allUnitNames[0] || c.units?.unit_name || '');
+  const premisesDesc = [unitsDesc, buildingName ? `of the property known as ${buildingName}` : '', locationAddress ? `located at ${locationAddress}` : '']
     .filter(Boolean).join(' ');
   const businessNature = c.renters?.business_name || 'the Lessee\u2019s stated business';
 
@@ -1463,7 +1559,7 @@ async function printContract(id){
 
   const win = window.open('', '_blank');
   win.document.write(`
-    <html><head><title>Lease Agreement — ${unitName}</title>
+    <html><head><title>Lease Agreement — ${unitsDesc}</title>
     <style>
       body{font-family:Georgia,serif;max-width:760px;margin:40px auto;line-height:1.6;color:#111;font-size:14px;}
       h1{font-size:20px;text-align:center;margin-bottom:22px;letter-spacing:1px;}
