@@ -230,6 +230,7 @@
           <select id="cRentPeriod" onchange="onRentPeriodChange()">
             <option value="monthly">Monthly</option>
             <option value="daily">Daily</option>
+            <option value="annual">Annual (lump sum)</option>
           </select>
         </div>
         <div><label id="cRentLabel">Monthly rent</label><input id="cRent" type="number" step="0.01"></div>
@@ -482,11 +483,16 @@ function onRenterModeChange(){
 
 function onRentPeriodChange(){
   const period = document.getElementById('cRentPeriod').value;
-  const daily = period === 'daily';
-  document.getElementById('cRentLabel').textContent = daily ? 'Daily rent' : 'Monthly rent';
-  document.getElementById('cTermLabel').textContent = daily ? 'Term (days)' : 'Term (months)';
-  document.getElementById('cTerm').value = daily ? 30 : 12;
-  document.getElementById('cDueDayField').classList.toggle('hidden', daily);
+  const labels = {
+    monthly: { rent: 'Monthly rent', term: 'Term (months)', defaultTerm: 12 },
+    daily:   { rent: 'Daily rent',   term: 'Term (days)',   defaultTerm: 30 },
+    annual:  { rent: 'Annual rent (lump sum)', term: 'Term (years)', defaultTerm: 1 }
+  }[period];
+  document.getElementById('cRentLabel').textContent = labels.rent;
+  document.getElementById('cTermLabel').textContent = labels.term;
+  document.getElementById('cTerm').value = labels.defaultTerm;
+  // Due-day-of-month only makes sense for monthly billing
+  document.getElementById('cDueDayField').classList.toggle('hidden', period !== 'monthly');
 }
 
 // ---------- DASHBOARD ----------
@@ -934,7 +940,10 @@ async function startEditContract(id){
   document.getElementById('cAdvance').value = c.advance;
   document.getElementById('cDeposit').value = c.deposit;
   document.getElementById('cStart').value = c.start_date;
-  document.getElementById('cTerm').value = c.rent_period === 'daily' ? (c.term_days||30) : (c.term_months||12);
+  document.getElementById('cTerm').value =
+    c.rent_period === 'daily' ? (c.term_days||30) :
+    c.rent_period === 'annual' ? (c.term_years||1) :
+    (c.term_months||12);
   document.getElementById('cDueDay').value = c.rent_due_day || 1;
   document.getElementById('cNotes').value = c.notes || '';
   document.getElementById('cTerms').value = c.terms_and_conditions || DEFAULT_TERMS;
@@ -953,7 +962,7 @@ function cancelEditContract(){
 }
 
 async function saveContract(){
-  const isDaily = document.getElementById('cRentPeriod').value === 'daily';
+  const rentPeriod = document.getElementById('cRentPeriod').value;
   const unit_id = document.getElementById('cUnit').value;
   if(!unit_id) return alert('Select a unit');
 
@@ -978,6 +987,7 @@ async function saveContract(){
 
   const start_date = document.getElementById('cStart').value;
   if(!start_date) return alert('Start date is required');
+  const termValue = parseInt(document.getElementById('cTerm').value) || 1;
 
   const payload = {
     unit_id, renter_id,
@@ -985,9 +995,10 @@ async function saveContract(){
     advance: parseFloat(document.getElementById('cAdvance').value) || 0,
     deposit: parseFloat(document.getElementById('cDeposit').value) || 0,
     start_date,
-    rent_period: isDaily ? 'daily' : 'monthly',
-    term_months: isDaily ? null : (parseInt(document.getElementById('cTerm').value) || 12),
-    term_days: isDaily ? (parseInt(document.getElementById('cTerm').value) || 30) : null,
+    rent_period: rentPeriod,
+    term_months: rentPeriod === 'monthly' ? termValue : null,
+    term_days: rentPeriod === 'daily' ? termValue : null,
+    term_years: rentPeriod === 'annual' ? termValue : null,
     rent_due_day: parseInt(document.getElementById('cDueDay').value) || 1,
     notes: document.getElementById('cNotes').value.trim(),
     terms_and_conditions: document.getElementById('cTerms').value
@@ -1112,13 +1123,18 @@ async function printContract(id){
   const startDateFormatted = `${ordinal(startDateObj.getDate())} day of ${startDateObj.toLocaleDateString(undefined,{month:'long'})}, ${startDateObj.getFullYear()}`;
 
   const isDaily = c.rent_period === 'daily';
+  const isAnnual = c.rent_period === 'annual';
   const termClause = isDaily
     ? `The term of this lease shall be for a period of ${c.term_days} day(s), beginning on ${fmtDate(c.start_date)} and ending on ${fmtDate(c.end_date)}.`
+    : isAnnual
+    ? `The term of this lease shall be for a period of ${c.term_years} year(s), beginning on ${fmtDate(c.start_date)} and ending on ${fmtDate(c.end_date)}.`
     : `The term of this lease shall be for a period of ${c.term_months} month(s), beginning on ${fmtDate(c.start_date)} and ending on ${fmtDate(c.end_date)}.`;
 
   const rentWords = numberToWords(c.rent_amount);
   const rentClause = isDaily
     ? `The Lessee shall pay the daily rent of ${rentWords} Pesos (${fmtMoney(c.rent_amount)}), due and payable at the end of each day of use, payable to the Lessor in cash, bank transfer, or any mutually agreed digital platform.`
+    : isAnnual
+    ? `The Lessee shall pay the annual rent of ${rentWords} Pesos (${fmtMoney(c.rent_amount)}) as a lump sum, due and payable in full on or before ${fmtDate(c.start_date)} of each year of the term, payable to the Lessor in cash, bank transfer, or any mutually agreed digital platform.`
     : `The Lessee shall pay the monthly rent of ${rentWords} Pesos (${fmtMoney(c.rent_amount)}). The rent shall be due and payable on or before the ${ordinal(c.rent_due_day)} day of every month, payable to the Lessor in cash, bank transfer, or any mutually agreed digital platform.`;
 
   const totalInitial = (Number(c.advance)||0) + (Number(c.deposit)||0);
