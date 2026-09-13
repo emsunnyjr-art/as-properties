@@ -260,7 +260,10 @@
       </div>
 
       <div><label>Notes</label><textarea id="cNotes" rows="2"></textarea></div>
-      <div><label>Terms &amp; Conditions</label><textarea id="cTerms" rows="10"></textarea></div>
+      <div><label>Terms &amp; Conditions</label>
+        <p class="muted" style="margin:0 0 4px 0;">Starts at clause 6 on purpose — clauses 1–5 (Purpose, Premises, Term, Rent, Deposit) are generated automatically from the unit/renter/rate details above and added when you preview or print.</p>
+        <textarea id="cTerms" rows="10"></textarea>
+      </div>
 
       <div><label>Attach scanned/signed contract (PDF or photo, optional)</label>
         <input id="cSignedFile" type="file" accept=".pdf,image/*">
@@ -1346,7 +1349,7 @@ async function loadContractsTable(){
       <td><span class="badge b-${c.status}">${c.status}</span></td>
       <td>
         <button class="btn secondary small" onclick="startEditContract('${c.id}')">Edit</button>
-        <button class="btn secondary small" onclick="printContract('${c.id}')">Print</button>
+        <button class="btn secondary small" onclick="printContract('${c.id}')">Preview</button>
         ${c.signed_file_path ? `<button class="btn secondary small" onclick="viewContractFile('${c.signed_file_path}')">📄 File</button>` : ''}
         ${c.status==='active' ? `<button class="btn danger small" onclick="cancelContract('${c.id}')">Cancel</button>` : ''}
       </td>
@@ -1467,7 +1470,7 @@ async function printContract(id){
       Series of 20____.</p>
     </div>
 
-    <p class="noprint" style="text-align:center;margin-top:30px;"><button onclick="window.print()">Print</button></p>
+    <p class="noprint" style="text-align:center;margin-top:30px;">This is a preview. <button onclick="window.print()">🖨️ Print this contract</button></p>
     </body></html>
   `);
   win.document.close();
