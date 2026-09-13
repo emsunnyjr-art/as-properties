@@ -130,14 +130,14 @@
   <section id="tab-properties" class="hidden">
     <div class="card">
       <p class="section-title" id="locFormTitle">Add location</p>
+      <p class="muted">A location is just the real-world address — building names like "Biga Phase 3" go in the card below, not here.</p>
       <div class="row">
-        <div><label>Name</label><input id="locName"></div>
         <div><label>Address</label><input id="locAddress" list="locAddressSuggestions" oninput="onAddressTyping()" autocomplete="off" placeholder="Start typing a real address…"><datalist id="locAddressSuggestions"></datalist></div>
       </div>
       <button class="btn" id="locSubmitBtn" onclick="saveLocation()">Add Location</button>
       <button class="btn secondary hidden" id="cancelLocEditBtn" onclick="cancelEditLocation()">Cancel edit</button>
       <table style="margin-top:14px;">
-        <thead><tr><th>Name</th><th>Address</th><th></th></tr></thead>
+        <thead><tr><th>Address</th><th></th></tr></thead>
         <tbody id="locationsTable"></tbody>
       </table>
     </div>
@@ -539,8 +539,14 @@ async function loadDashboard(){
     <div class="stat"><div class="num" style="color:var(--warn)">${expiringCount}</div><div class="lbl">Contracts expiring</div></div>
   `;
 
-  await loadCollectionCharts();
-  loadOccupancyChart(units||[]);
+  try{
+    await loadCollectionCharts();
+    loadOccupancyChart(units||[]);
+  }catch(e){
+    console.error('Chart rendering failed:', e);
+    document.getElementById('percentLabel').textContent = 'Chart failed to load — see browser console';
+    document.getElementById('occupancyLabel').textContent = 'Chart failed to load — see browser console';
+  }
 
   const list = document.getElementById('reminderList');
   const empty = document.getElementById('reminderEmpty');
@@ -778,7 +784,7 @@ async function loadPropertyDropdowns(){
 function loadLocationsTable(locs){
   document.getElementById('locationsTable').innerHTML = (locs||[]).map(l=>`
     <tr>
-      <td>${l.name}</td><td>${l.address||'—'}</td>
+      <td>${l.address || l.name}</td>
       <td><button class="btn secondary small" onclick="startEditLocation('${l.id}')">Edit</button></td>
     </tr>
   `).join('');
@@ -793,15 +799,14 @@ function loadBuildingsTable(blds){
   `).join('');
 }
 
-// --- Location (add or edit) ---
+// --- Location (add or edit) — a location IS its address, no separate name ---
 async function saveLocation(){
-  const name = document.getElementById('locName').value.trim();
   const address = document.getElementById('locAddress').value.trim();
-  if(!name) return alert('Name required');
+  if(!address) return alert('Address required');
   if(editingLocationId){
-    await sb.from('locations').update({ name, address }).eq('id', editingLocationId);
+    await sb.from('locations').update({ name: address, address }).eq('id', editingLocationId);
   } else {
-    await sb.from('locations').insert({ name, address });
+    await sb.from('locations').insert({ name: address, address });
   }
   cancelEditLocation();
   loadPropertyDropdowns(); loadContractCascadingData();
@@ -811,8 +816,7 @@ async function startEditLocation(id){
   const { data: l } = await sb.from('locations').select('*').eq('id', id).single();
   if(!l) return;
   editingLocationId = id;
-  document.getElementById('locName').value = l.name;
-  document.getElementById('locAddress').value = l.address || '';
+  document.getElementById('locAddress').value = l.address || l.name || '';
   document.getElementById('locFormTitle').textContent = 'Editing location';
   document.getElementById('locSubmitBtn').textContent = 'Update Location';
   document.getElementById('cancelLocEditBtn').classList.remove('hidden');
@@ -821,7 +825,7 @@ async function startEditLocation(id){
 
 function cancelEditLocation(){
   editingLocationId = null;
-  document.getElementById('locName').value=''; document.getElementById('locAddress').value='';
+  document.getElementById('locAddress').value='';
   document.getElementById('locFormTitle').textContent = 'Add location';
   document.getElementById('locSubmitBtn').textContent = 'Add Location';
   document.getElementById('cancelLocEditBtn').classList.add('hidden');
