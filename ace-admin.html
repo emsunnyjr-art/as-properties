@@ -541,13 +541,17 @@ async function loadDashboard(){
   empty.classList.add('hidden');
 
   reminders.forEach(r=>{
-    const typeLabel = {
-      rent_due: `Rent due ${r.days_offset===0?'today':'in '+r.days_offset+' day(s)'}`,
-      rent_overdue: `Rent overdue by ${r.days_offset} day(s)`,
-      contract_expiring: `Contract ${r.days_offset===0?'ends today':'ends in '+r.days_offset+' day(s)'}`
-    }[r.reminder_type];
-    const badgeClass = r.reminder_type==='rent_overdue' ? 'b-overdue'
-      : r.reminder_type==='contract_expiring' ? 'b-expiring' : 'b-pending';
+    const isRentType = r.reminder_type === 'rent_payment' || r.reminder_type === 'rent_due' || r.reminder_type === 'rent_overdue';
+    const isOverdue = r.reminder_type === 'rent_overdue' || (r.reminder_type === 'rent_payment' && r.days_offset > 0);
+    let typeLabel;
+    if(r.reminder_type === 'contract_expiring'){
+      typeLabel = `Contract ${r.days_offset===0?'ends today':'ends in '+r.days_offset+' day(s)'}`;
+    } else if(isOverdue){
+      typeLabel = `Rent overdue by ${Math.abs(r.days_offset)} day(s)`;
+    } else {
+      typeLabel = `Rent due ${r.days_offset===0?'today':'in '+Math.abs(r.days_offset)+' day(s)'}`;
+    }
+    const badgeClass = isOverdue ? 'b-overdue' : r.reminder_type==='contract_expiring' ? 'b-expiring' : 'b-pending';
     const msg = r.reminder_type==='contract_expiring'
       ? `Hi ${r.renter_name}, this is a reminder that your lease for ${r.unit_name} ends on ${fmtDate(r.target_date)}. Please let us know your plans.`
       : `Hi ${r.renter_name}, this is a reminder that rent of ${fmtMoney(r.amount_due)} for ${r.unit_name} was due ${fmtDate(r.target_date)}. Kindly settle at your earliest convenience.`;
@@ -564,7 +568,7 @@ async function loadDashboard(){
         <a class="action" href="${telHref(r.contact_number)}">📞 Call</a>
         <a class="action" href="${smsHref(r.contact_number, msg)}">💬 SMS</a>
         ${r.rent_payment_id ? `<button class="btn small" onclick="markReminderPaid('${r.rent_payment_id}')">✅ Mark paid</button>` : ''}
-        <button class="btn secondary small" onclick="ackReminder('${r.reminder_id}')">Mark sent</button>
+        <button class="btn secondary small" onclick="ackReminder('${r.reminder_id}')">${isRentType ? 'Hide for today' : 'Mark sent'}</button>
       </div>
     `;
     list.appendChild(div);
