@@ -803,6 +803,20 @@ function loadBuildingsTable(blds){
 async function saveLocation(){
   const address = document.getElementById('locAddress').value.trim();
   if(!address) return alert('Address required');
+
+  // Heuristic: a real address usually has comma-separated parts (barangay,
+  // city, province). Something like "Biga Phase 3" with no commas is
+  // almost always actually a building/phase name typed into the wrong
+  // field — catch it here instead of cleaning it up later.
+  if(!address.includes(',')){
+    const proceed = confirm(
+      `"${address}" doesn't look like a full address (no barangay/city/province). `+
+      `If this is actually a building or phase name, cancel and add it under "Add building" instead, `+
+      `attached to the correct location. Save it as a location anyway?`
+    );
+    if(!proceed) return;
+  }
+
   if(editingLocationId){
     await sb.from('locations').update({ name: address, address }).eq('id', editingLocationId);
   } else {
