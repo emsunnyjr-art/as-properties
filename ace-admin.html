@@ -1332,14 +1332,20 @@ async function uploadSignedFileIfSelected(contractId){
 }
 
 async function viewContractFile(path){
-  const win = window.open('', '_blank');
-  if(!win){
-    alert('Your browser blocked the popup. Please allow popups for this site and try again.');
+  showPreviewOverlay('Loading file…');
+  document.getElementById('previewFrame').srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
+
+  const { data, error } = await sb.storage.from('contract-files').createSignedUrl(path, 3600);
+  if(error){
+    document.getElementById('previewTitle').textContent = 'Could not open file';
+    document.getElementById('previewFrame').srcdoc =
+      `<body style="font-family:sans-serif;padding:40px;"><h2>Could not open file</h2><p>${error.message}</p></body>`;
     return;
   }
-  const { data, error } = await sb.storage.from('contract-files').createSignedUrl(path, 3600);
-  if(error){ win.close(); return alert('Could not open file: ' + error.message); }
-  win.location.href = data.signedUrl;
+  document.getElementById('previewTitle').textContent = 'Signed contract file';
+  const frame = document.getElementById('previewFrame');
+  frame.removeAttribute('srcdoc');
+  frame.src = data.signedUrl;
 }
 
 async function saveContract(){
@@ -1522,27 +1528,19 @@ async function cancelContract(id){
 }
 
 async function printContract(id){
-  // Open the tab FIRST, synchronously, in direct response to the click —
-  // if this happens after an await, most browsers' popup blockers silently
-  // kill it, which looks exactly like "the button does nothing."
-  const win = window.open('', '_blank');
-  if(!win){
-    alert('Your browser blocked the preview popup. Please allow popups for this site and try again.');
-    return;
-  }
-  win.document.title = 'Loading contract…';
+  showPreviewOverlay('Loading contract…');
+  document.getElementById('previewFrame').srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
 
   const { data: c, error: fetchErr } = await sb.from('contracts')
     .select('*, units(unit_name, buildings(name, locations(address))), renters(name, business_name, address, contact_number)')
     .eq('id', id).single();
   if(fetchErr || !c){
-    win.document.title = 'Preview failed';
-    win.location.href = 'data:text/html,' + encodeURIComponent(
+    document.getElementById('previewTitle').textContent = 'Preview failed';
+    document.getElementById('previewFrame').srcdoc =
       `<body style="font-family:sans-serif;padding:40px;">
          <h2>Could not load this contract</h2>
          <p>${fetchErr ? (fetchErr.message || JSON.stringify(fetchErr)) : 'No contract data returned.'}</p>
-       </body>`
-    );
+       </body>`;
     return;
   }
 
@@ -1657,9 +1655,8 @@ async function printContract(id){
     </body></html>
   `;
 
-  const blob = new Blob([contractHtml], { type: 'text/html' });
-  const blobUrl = URL.createObjectURL(blob);
-  win.location.href = blobUrl;
+  document.getElementById('previewTitle').textContent = `Lease Agreement — ${unitsDesc}`;
+  document.getElementById('previewFrame').srcdoc = contractHtml;
 }
 
 // ---------- PAYMENTS ----------
@@ -1697,6 +1694,35 @@ async function recordPayment(id, amountDue){
 
 // ---------- init ----------
 if(sb) loadAll();
+</script>
+
+<div id="previewOverlay" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:1000;display:flex;flex-direction:column;">
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--border);">
+    <strong id="previewTitle" style="color:var(--text);">Preview</strong>
+    <div>
+      <button class="btn small" onclick="printPreviewFrame()">🖨️ Print</button>
+      <button class="btn secondary small" onclick="closePreviewOverlay()">✕ Close</button>
+    </div>
+  </div>
+  <iframe id="previewFrame" style="flex:1;border:none;width:100%;background:white;"></iframe>
+</div>
+
+<script>
+function showPreviewOverlay(title){
+  document.getElementById('previewTitle').textContent = title || 'Preview';
+  document.getElementById('previewOverlay').classList.remove('hidden');
+}
+function closePreviewOverlay(){
+  document.getElementById('previewOverlay').classList.add('hidden');
+  const frame = document.getElementById('previewFrame');
+  frame.removeAttribute('src');
+  frame.srcdoc = '';
+}
+function printPreviewFrame(){
+  const frame = document.getElementById('previewFrame');
+  try{ frame.contentWindow.focus(); frame.contentWindow.print(); }
+  catch(e){ alert('Could not open the print dialog for this preview.'); }
+}
 </script>
 </body>
 </html>
