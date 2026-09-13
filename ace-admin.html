@@ -1573,7 +1573,7 @@ async function printContract(id){
 
   const totalInitial = (Number(c.advance)||0) + (Number(c.deposit)||0);
 
-  win.document.write(`
+  const contractHtml = `
     <html><head><title>Lease Agreement — ${unitsDesc}</title>
     <style>
       body{font-family:Georgia,serif;max-width:760px;margin:40px auto;line-height:1.6;color:#111;font-size:14px;}
@@ -1646,8 +1646,11 @@ async function printContract(id){
 
     <p class="noprint" style="text-align:center;margin-top:30px;">This is a preview. <button onclick="window.print()">🖨️ Print this contract</button></p>
     </body></html>
-  `);
-  win.document.close();
+  `;
+
+  const blob = new Blob([contractHtml], { type: 'text/html' });
+  const blobUrl = URL.createObjectURL(blob);
+  win.location.href = blobUrl;
 }
 
 // ---------- PAYMENTS ----------
