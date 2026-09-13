@@ -1332,9 +1332,14 @@ async function uploadSignedFileIfSelected(contractId){
 }
 
 async function viewContractFile(path){
+  const win = window.open('', '_blank');
+  if(!win){
+    alert('Your browser blocked the popup. Please allow popups for this site and try again.');
+    return;
+  }
   const { data, error } = await sb.storage.from('contract-files').createSignedUrl(path, 3600);
-  if(error) return alert('Could not open file: ' + error.message);
-  window.open(data.signedUrl, '_blank');
+  if(error){ win.close(); return alert('Could not open file: ' + error.message); }
+  win.location.href = data.signedUrl;
 }
 
 async function saveContract(){
@@ -1517,10 +1522,20 @@ async function cancelContract(id){
 }
 
 async function printContract(id){
+  // Open the tab FIRST, synchronously, in direct response to the click —
+  // if this happens after an await, most browsers' popup blockers silently
+  // kill it, which looks exactly like "the button does nothing."
+  const win = window.open('', '_blank');
+  if(!win){
+    alert('Your browser blocked the preview popup. Please allow popups for this site and try again.');
+    return;
+  }
+  win.document.title = 'Loading contract…';
+
   const { data: c } = await sb.from('contracts')
     .select('*, units(unit_name, buildings(name, locations(address))), renters(name, business_name, address, contact_number)')
     .eq('id', id).single();
-  if(!c) return;
+  if(!c){ win.close(); return; }
 
   const { data: cus } = await sb.from('contract_units')
     .select('units(unit_name)')
@@ -1558,7 +1573,6 @@ async function printContract(id){
 
   const totalInitial = (Number(c.advance)||0) + (Number(c.deposit)||0);
 
-  const win = window.open('', '_blank');
   win.document.write(`
     <html><head><title>Lease Agreement — ${unitsDesc}</title>
     <style>
