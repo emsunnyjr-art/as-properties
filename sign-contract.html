@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign Your Lease Contract</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  body{font-family:Georgia,serif;max-width:760px;margin:20px auto;padding:0 16px;line-height:1.6;color:#111;font-size:15px;}
+  h1{font-size:20px;text-align:center;margin-bottom:4px;}
+  h3{font-size:15px;margin-top:20px;margin-bottom:4px;}
+  p{margin:6px 0;text-align:justify;}
+  .muted{color:#666;font-size:13px;text-align:center;}
+  .card{border:1px solid #ccc;border-radius:10px;padding:20px;margin-top:20px;background:#fafafa;}
+  label{display:block;font-size:13px;color:#444;margin-bottom:4px;margin-top:14px;}
+  input[type="text"]{width:100%;padding:10px;border:1px solid #bbb;border-radius:6px;font-size:15px;box-sizing:border-box;}
+  canvas{border:1px solid #999;border-radius:6px;width:100%;height:160px;touch-action:none;background:white;}
+  .btnRow{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;}
+  button{padding:12px 20px;border-radius:8px;border:none;font-size:15px;font-weight:600;cursor:pointer;}
+  .primary{background:#2563eb;color:white;flex:1;min-width:160px;}
+  .secondary{background:#e5e7eb;color:#111;}
+  .center{text-align:center;padding:60px 20px;}
+  #loading, #alreadySigned, #signSuccess, #errorState { display:none; }
+</style>
+</head>
+<body>
+
+<div id="loading" class="center"><p>Loading your contract…</p></div>
+
+<div id="errorState" class="center">
+  <h2>Link not valid</h2>
+  <p id="errorMessage">This signing link is invalid or has expired. Please contact the property owner for a new link.</p>
+</div>
+
+<div id="alreadySigned" class="center">
+  <h2>✅ Already signed</h2>
+  <p>This contract was signed by <strong id="alreadySignedName"></strong> on <span id="alreadySignedDate"></span>.</p>
+  <p class="muted">If this wasn't you, please contact the property owner right away.</p>
+</div>
+
+<div id="signSuccess" class="center">
+  <h2>✅ Signed successfully</h2>
+  <p>Thank you, <strong id="successName"></strong> — your signature has been recorded and the property owner has been notified.</p>
+</div>
+
+<div id="contractView">
+  <h1>LEASE AGREEMENT</h1>
+  <p class="muted">Please review the full contract below, then sign at the bottom.</p>
+
+  <div id="contractBody"></div>
+
+  <div class="card">
+    <h3>Sign this contract</h3>
+    <p class="muted" style="text-align:left;">By typing your name and signing below, you confirm you have read and agree to the terms above.</p>
+
+    <label>Your full name</label>
+    <input type="text" id="signerName" placeholder="Type your full legal name">
+
+    <label>Draw your signature below</label>
+    <canvas id="sigPad"></canvas>
+    <div class="btnRow">
+      <button class="secondary" onclick="clearSignature()" type="button">Clear</button>
+    </div>
+
+    <div class="btnRow">
+      <button class="primary" onclick="submitSignature()" type="button">Sign Contract</button>
+    </div>
+    <p class="muted" style="margin-top:14px;">Your name, signature, the time, and your IP address are recorded as evidence of this signature.</p>
+  </div>
+</div>
+
+<script>
+// ⚠ Same project as the admin app — fill these in identically.
+const SUPABASE_URL = "https://izpaskyqsozpgfgnmlqu.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_7rT5LFITgGrwZwCgy_2VMQ_nUJrxmmU";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+function fmtMoney(n){ return '₱' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}); }
+function fmtDate(d){ return d ? new Date(d+'T00:00:00').toLocaleDateString() : '—'; }
+function ordinal(n){
+  const s = ["th","st","nd","rd"], v = n % 100;
+  return n + (s[(v-20)%10] || s[v] || s[0]);
+}
+function numberToWords(num){
+  const ones = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten',
+    'Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+  const tens = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+  function chunk(n){
+    let s = '';
+    if(n >= 100){ s += ones[Math.floor(n/100)] + ' Hundred '; n %= 100; }
+    if(n >= 20){ s += tens[Math.floor(n/10)] + ' '; n %= 10; }
+    if(n > 0) s += ones[n] + ' ';
+    return s.trim();
+  }
+  num = Math.round(num);
+  if(num === 0) return 'Zero';
+  const parts = [];
+  const millions = Math.floor(num / 1e6); num %= 1e6;
+  const thousands = Math.floor(num / 1e3); num %= 1e3;
+  if(millions) parts.push(chunk(millions) + ' Million');
+  if(thousands) parts.push(chunk(thousands) + ' Thousand');
+  if(num) parts.push(chunk(num));
+  return parts.join(' ');
+}
+
+function show(id){ document.getElementById(id).style.display = 'block'; }
+function hide(id){ document.getElementById(id).style.display = 'none'; }
+
+const params = new URLSearchParams(window.location.search);
+const token = params.get('token');
+let contractId = null;
+
+async function init(){
+  hide('contractView');
+  if(!token){
+    show('errorState');
+    document.getElementById('errorMessage').textContent = 'No signing link token found in the URL.';
+    return;
+  }
+  show('loading');
+  const { data, error } = await sb.rpc('get_contract_for_signing', { p_token: token });
+  hide('loading');
+  const c = data && data[0];
+  if(error || !c){
+    show('errorState');
+    if(error) document.getElementById('errorMessage').textContent = error.message;
+    return;
+  }
+  contractId = c.contract_id;
+
+  if(c.already_signed){
+    document.getElementById('alreadySignedName').textContent = c.signer_name || '';
+    document.getElementById('alreadySignedDate').textContent = new Date(c.signed_at).toLocaleString();
+    show('alreadySigned');
+    return;
+  }
+
+  renderContract(c);
+  show('contractView');
+  setupSignaturePad();
+}
+
+function renderContract(c){
+  const isDaily = c.rent_period === 'daily';
+  const isAnnual = c.rent_period === 'annual';
+  const termClause = isDaily
+    ? `The term of this lease shall be for a period of ${c.term_days} day(s), beginning on ${fmtDate(c.start_date)} and ending on ${fmtDate(c.end_date)}.`
+    : isAnnual
+    ? `The term of this lease shall be for a period of ${c.term_years} year(s), beginning on ${fmtDate(c.start_date)} and ending on ${fmtDate(c.end_date)}.`
+    : `The term of this lease shall be for a period of ${c.term_months} month(s), beginning on ${fmtDate(c.start_date)} and ending on ${fmtDate(c.end_date)}.`;
+  const rentWords = numberToWords(c.rent_amount);
+  const rentClause = isDaily
+    ? `The Lessee shall pay the daily rent of ${rentWords} Pesos (${fmtMoney(c.rent_amount)}), due at the end of each day of use.`
+    : isAnnual
+    ? `The Lessee shall pay the annual rent of ${rentWords} Pesos (${fmtMoney(c.rent_amount)}) as a lump sum, due on or before ${fmtDate(c.start_date)} of each year of the term.`
+    : `The Lessee shall pay the monthly rent of ${rentWords} Pesos (${fmtMoney(c.rent_amount)}), due on or before the ${ordinal(c.rent_due_day)} day of every month.`;
+  const totalInitial = (Number(c.advance)||0) + (Number(c.deposit)||0);
+  const premisesDesc = [c.unit_names, c.building_name ? `of the property known as ${c.building_name}` : '', c.location_address ? `located at ${c.location_address}` : '']
+    .filter(Boolean).join(' ');
+
+  document.getElementById('contractBody').innerHTML = `
+    <p><strong>${c.renter_name}</strong>, the "Lessee", with a postal address at ${c.renter_address||'—'}.</p>
+    <h3>1. Purpose of Lease</h3>
+    <p>1.1. The leased premises shall be used solely for the operation of ${c.business_name || "the Lessee's stated business"}.</p>
+    <h3>2. Premises</h3>
+    <p>2.1. The Lessor hereby leases to the Lessee ${premisesDesc}.</p>
+    <h3>3. Term</h3>
+    <p>3.1. ${termClause}</p>
+    <h3>4. Rent</h3>
+    <p>4.1. ${rentClause}</p>
+    <h3>5. Deposit and Advance Rent</h3>
+    <p>5.1. Advance: ${fmtMoney(c.advance)}. Deposit: ${fmtMoney(c.deposit)}. Total initial payment: ${fmtMoney(totalInitial)}.</p>
+    <div>${(c.terms_and_conditions||'').split(/\n\s*\n/).map(block=>{
+      const lines = block.split('\n');
+      const heading = lines[0];
+      const rest = lines.slice(1).join(' ');
+      return `<h3>${heading.replace(/</g,'&lt;')}</h3>${rest ? `<p>${rest.replace(/</g,'&lt;')}</p>` : ''}`;
+    }).join('')}</div>
+  `;
+}
+
+// ---------- signature pad ----------
+let drawing = false, ctx, hasDrawn = false;
+function setupSignaturePad(){
+  const canvas = document.getElementById('sigPad');
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * ratio;
+  canvas.height = canvas.clientHeight * ratio;
+  ctx = canvas.getContext('2d');
+  ctx.scale(ratio, ratio);
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#111';
+
+  function pos(e){
+    const rect = canvas.getBoundingClientRect();
+    const p = e.touches ? e.touches[0] : e;
+    return { x: p.clientX - rect.left, y: p.clientY - rect.top };
+  }
+  function start(e){ drawing = true; hasDrawn = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); }
+  function move(e){ if(!drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); }
+  function end(){ drawing = false; }
+
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  canvas.addEventListener('touchstart', start);
+  canvas.addEventListener('touchmove', move);
+  canvas.addEventListener('touchend', end);
+}
+function clearSignature(){
+  const canvas = document.getElementById('sigPad');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  hasDrawn = false;
+}
+
+async function submitSignature(){
+  const name = document.getElementById('signerName').value.trim();
+  if(!name) return alert('Please type your full name.');
+  if(!hasDrawn) return alert('Please draw your signature.');
+
+  const canvas = document.getElementById('sigPad');
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+  const path = `signatures/${token}/${Date.now()}.png`;
+  const { error: upErr } = await sb.storage.from('contract-files').upload(path, blob, { contentType: 'image/png' });
+  if(upErr) return alert('Could not save signature image: ' + upErr.message);
+
+  const { data: ok, error } = await sb.rpc('submit_contract_signature', {
+    p_token: token, p_signer_name: name, p_signature_path: path
+  });
+  if(error || !ok) return alert('Could not submit signature: ' + (error ? error.message : 'this contract may already be signed.'));
+
+  hide('contractView');
+  document.getElementById('successName').textContent = name;
+  show('signSuccess');
+}
+
+init();
+</script>
+</body>
+</html>

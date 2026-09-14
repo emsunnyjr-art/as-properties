@@ -192,6 +192,10 @@
         <div><label>Email (optional)</label><input id="rEmail"></div>
         <div><label>Address</label><input id="rAddress"></div>
       </div>
+      <div><label>Upload renter ID (photo or scan)</label>
+        <input id="rIdFile" type="file" accept=".pdf,image/*">
+        <p class="muted" id="rIdFileCurrent" style="margin:2px 0 8px 0;"></p>
+      </div>
       <button class="btn" id="renterSubmitBtn" onclick="saveRenter()">Add Renter</button>
       <button class="btn secondary hidden" id="cancelRenterEditBtn" onclick="cancelEditRenter()">Cancel edit</button>
     </div>
@@ -275,6 +279,17 @@
         <p class="muted" id="cSignedFileCurrent" style="margin:2px 0 8px 0;"></p>
       </div>
 
+      <div class="row">
+        <div><label>Advance payment proof (screenshot/receipt, optional)</label>
+          <input id="cAdvanceProof" type="file" accept=".pdf,image/*">
+          <p class="muted" id="cAdvanceProofCurrent" style="margin:2px 0 8px 0;"></p>
+        </div>
+        <div><label>Deposit payment proof (screenshot/receipt, optional)</label>
+          <input id="cDepositProof" type="file" accept=".pdf,image/*">
+          <p class="muted" id="cDepositProofCurrent" style="margin:2px 0 8px 0;"></p>
+        </div>
+      </div>
+
       <button class="btn" id="contractSubmitBtn" onclick="saveContract()">Create Contract</button>
       <button class="btn secondary hidden" id="cancelEditBtn" onclick="cancelEditContract()">Cancel edit</button>
       <p class="muted">Creating a new contract for a unit that already has an active one closes the old one out automatically (kept on file, not deleted) the day before this one starts. Editing an existing contract only regenerates the schedule going forward — anything already paid stays untouched.</p>
@@ -301,10 +316,13 @@
       <p class="section-title">Select contract</p>
       <select id="payContractSelect" onchange="loadPaymentSchedule()"></select>
     </div>
+
+    <div id="paymentFormPanel"></div>
+
     <div class="card">
       <p class="section-title">Rent schedule</p>
       <table>
-        <thead><tr><th>Period</th><th>Due</th><th>Amount</th><th>Paid</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Period</th><th>Due</th><th>Amount</th><th>Paid</th><th>Status</th><th>Receipt</th><th></th></tr></thead>
         <tbody id="scheduleTable"></tbody>
       </table>
     </div>
@@ -809,7 +827,7 @@ function loadLocationsTable(locs){
       <td>${l.address || l.name}</td>
       <td>
         <button class="btn secondary small" onclick="startEditLocation('${l.id}')">Edit</button>
-        <button class="btn danger small" onclick="deleteLocation('${l.id}')">Delete</button>
+        <button class="btn danger small" onclick="confirmDelete(this, () => deleteLocation('${l.id}'))">Delete</button>
       </td>
     </tr>
   `).join('');
@@ -821,21 +839,39 @@ function loadBuildingsTable(blds){
       <td>${b.name}</td><td>${b.locations?.name||'—'}</td><td>${b.description||'—'}</td>
       <td>
         <button class="btn secondary small" onclick="startEditBuilding('${b.id}')">Edit</button>
-        <button class="btn danger small" onclick="deleteBuilding('${b.id}')">Delete</button>
+        <button class="btn danger small" onclick="confirmDelete(this, () => deleteBuilding('${b.id}'))">Delete</button>
       </td>
     </tr>
   `).join('');
 }
 
+// Two-tap delete protection: first tap "arms" the button (relabels it and
+// waits a few seconds), second tap within that window actually deletes.
+// Any stray tap elsewhere, or just pausing, disarms it automatically —
+// so it takes a deliberate second tap to actually remove anything.
+function confirmDelete(btn, deleteFn){
+  if(btn.dataset.armed === 'true'){
+    clearTimeout(Number(btn.dataset.armTimer));
+    deleteFn();
+    return;
+  }
+  btn.dataset.armed = 'true';
+  btn.dataset.originalText = btn.textContent;
+  btn.textContent = 'Tap again to confirm';
+  const timer = setTimeout(()=>{
+    btn.dataset.armed = 'false';
+    btn.textContent = btn.dataset.originalText;
+  }, 4000);
+  btn.dataset.armTimer = timer;
+}
+
 async function deleteLocation(id){
-  if(!confirm('Delete this location? Any buildings under it will be kept but unlinked from a location.')) return;
   const { error } = await sb.from('locations').delete().eq('id', id);
   if(error) return alert('Could not delete: ' + error.message);
   loadPropertyDropdowns(); loadContractCascadingData();
 }
 
 async function deleteBuilding(id){
-  if(!confirm('Delete this building? Any units under it will be kept but unlinked from a building.')) return;
   const { error } = await sb.from('buildings').delete().eq('id', id);
   if(error) return alert('Could not delete: ' + error.message);
   loadPropertyDropdowns(); loadContractCascadingData(); loadUnitsTable();
@@ -1071,7 +1107,6 @@ async function markUtilityPaid(utilId, unitId){
 }
 
 async function deleteUnit(id){
-  if(!confirm('Delete this unit? This only works if it has no contract history on file.')) return;
   const { error } = await sb.from('units').delete().eq('id', id);
   if(error){
     if(error.code === '23503'){
@@ -1097,7 +1132,7 @@ async function loadUnitsTable(){
       <td>
         <button class="btn small" onclick="showUnitDetail('${u.unit_id}')">View</button>
         <button class="btn secondary small" onclick="startEditUnit('${u.unit_id}')">Edit</button>
-        <button class="btn danger small" onclick="deleteUnit('${u.unit_id}')">Delete</button>
+        <button class="btn danger small" onclick="confirmDelete(this, () => deleteUnit('${u.unit_id}'))">Delete</button>
         <a class="action" href="javascript:void(0)" onclick="filterContractsByUnit('${u.unit_id}','${(u.unit_name||'').replace(/'/g,"\\'")}')">History</a>
       </td>
     </tr>
@@ -1112,11 +1147,15 @@ async function saveRenter(){
   const email = document.getElementById('rEmail').value.trim();
   const address = document.getElementById('rAddress').value.trim();
   if(!name) return alert('Name required');
-  if(editingRenterId){
-    await sb.from('renters').update({ name, business_name, contact_number, email, address }).eq('id', editingRenterId);
+  let renterId = editingRenterId;
+  if(renterId){
+    await sb.from('renters').update({ name, business_name, contact_number, email, address }).eq('id', renterId);
   } else {
-    await sb.from('renters').insert({ name, business_name, contact_number, email, address });
+    const { data: created, error } = await sb.from('renters').insert({ name, business_name, contact_number, email, address }).select().single();
+    if(error) return alert('Error: ' + error.message);
+    renterId = created.id;
   }
+  await uploadFileToTable('rIdFile', 'renters', 'renters', 'id', renterId, 'id_file_path', 'id_file_name');
   cancelEditRenter();
   loadRenters(); loadContractCascadingData();
 }
@@ -1130,6 +1169,8 @@ async function startEditRenter(id){
   document.getElementById('rContact').value = r.contact_number || '';
   document.getElementById('rEmail').value = r.email || '';
   document.getElementById('rAddress').value = r.address || '';
+  document.getElementById('rIdFile').value = '';
+  document.getElementById('rIdFileCurrent').textContent = r.id_file_name ? `Current ID on file: ${r.id_file_name} (choose a new file to replace it)` : 'No ID uploaded yet.';
   document.getElementById('renterFormTitle').textContent = 'Editing renter';
   document.getElementById('renterSubmitBtn').textContent = 'Update Renter';
   document.getElementById('cancelRenterEditBtn').classList.remove('hidden');
@@ -1139,6 +1180,8 @@ async function startEditRenter(id){
 function cancelEditRenter(){
   editingRenterId = null;
   ['rName','rBusiness','rContact','rEmail','rAddress'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('rIdFile').value = '';
+  document.getElementById('rIdFileCurrent').textContent = '';
   document.getElementById('renterFormTitle').textContent = 'Add renter';
   document.getElementById('renterSubmitBtn').textContent = 'Add Renter';
   document.getElementById('cancelRenterEditBtn').classList.add('hidden');
@@ -1207,6 +1250,7 @@ async function loadRenters(){
       <td>
         <button class="btn small" onclick="showRenterDetail('${r.id}')">View</button>
         <button class="btn secondary small" onclick="startEditRenter('${r.id}')">Edit</button>
+        ${r.id_file_path ? `<button class="btn secondary small" onclick="viewStoredFile('${r.id_file_path}','${r.name.replace(/'/g,"\\'")} — ID')">🪪 ID</button>` : ''}
         <a class="action" href="${telHref(r.contact_number)}">📞</a>
         <a class="action" href="${smsHref(r.contact_number)}">💬</a>
       </td>
@@ -1226,6 +1270,48 @@ function buildNotifyMessage(kind, renterName, unitName, c){
   return `Hi ${renterName}, your contract for ${unitName} has been updated. `+
     `New rent: ${fmtMoney(c.rent_amount)} (${c.rent_period}), effective now, running through ${fmtDate(c.end_date)}. `+
     `Please reach out if you have any questions. Thank you!`;
+}
+
+async function sendForSignature(contractId){
+  // Reuse an existing token if one's already been issued (so a re-sent
+  // link doesn't invalidate one the renter may already have open).
+  const { data: existing } = await sb.from('contracts').select('signing_token, unit_id, renter_id').eq('id', contractId).single();
+  let token = existing?.signing_token;
+  if(!token){
+    token = crypto.randomUUID();
+    const { error } = await sb.from('contracts').update({ signing_token: token }).eq('id', contractId);
+    if(error) return alert('Could not create signing link: ' + error.message);
+  }
+
+  const { data: cus } = await sb.from('contract_units').select('units(unit_name)').eq('contract_id', contractId);
+  const unitNames = (cus||[]).map(x=>x.units?.unit_name).filter(Boolean).join(', ');
+  const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', existing.renter_id).single();
+
+  const signLink = `${window.location.origin}${window.location.pathname.replace(/ace-admin\.html$/, '')}sign-contract.html?token=${token}`;
+  const message = `Hi ${renter?.name||''}, please review and sign your lease contract for ${unitNames} here: ${signLink}`;
+  showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number, message);
+}
+
+async function viewSignature(contractId){
+  const { data: c } = await sb.from('contracts').select('signer_name, signed_at, signer_ip, signature_image_path').eq('id', contractId).single();
+  if(!c || !c.signature_image_path) return;
+  showPreviewOverlay('Signature record');
+  document.getElementById('previewFrame').srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
+  const { data, error } = await sb.storage.from('contract-files').createSignedUrl(c.signature_image_path, 3600);
+  if(error){
+    document.getElementById('previewFrame').srcdoc = `<body style="font-family:sans-serif;padding:40px;"><p>Could not load signature: ${error.message}</p></body>`;
+    return;
+  }
+  const frame = document.getElementById('previewFrame');
+  frame.removeAttribute('src');
+  frame.srcdoc = `
+    <body style="font-family:sans-serif;padding:30px;">
+      <h2>Signed by ${c.signer_name||''}</h2>
+      <p><strong>Signed at:</strong> ${new Date(c.signed_at).toLocaleString()}</p>
+      <p><strong>Recorded IP:</strong> ${c.signer_ip||'unknown'}</p>
+      <p><strong>Signature:</strong></p>
+      <img src="${data.signedUrl}" style="max-width:100%;border:1px solid #ccc;border-radius:6px;">
+    </body>`;
 }
 
 function showNotifyPanel(renterName, email, contact, message){
@@ -1296,6 +1382,10 @@ async function startEditContract(id){
   document.getElementById('cTerms').value = c.terms_and_conditions || DEFAULT_TERMS;
   document.getElementById('cSignedFile').value = '';
   document.getElementById('cSignedFileCurrent').textContent = c.signed_file_name ? `Current file: ${c.signed_file_name} (choose a new file to replace it)` : 'No file attached yet.';
+  document.getElementById('cAdvanceProof').value = '';
+  document.getElementById('cAdvanceProofCurrent').textContent = c.advance_proof_name ? `Current file: ${c.advance_proof_name} (choose a new file to replace it)` : 'No proof uploaded yet.';
+  document.getElementById('cDepositProof').value = '';
+  document.getElementById('cDepositProofCurrent').textContent = c.deposit_proof_name ? `Current file: ${c.deposit_proof_name} (choose a new file to replace it)` : 'No proof uploaded yet.';
 
   document.querySelector('#tab-contracts').scrollIntoView({behavior:'smooth'});
 }
@@ -1310,6 +1400,10 @@ function cancelEditContract(){
   document.getElementById('cTerms').value = DEFAULT_TERMS;
   document.getElementById('cSignedFile').value = '';
   document.getElementById('cSignedFileCurrent').textContent = '';
+  document.getElementById('cAdvanceProof').value = '';
+  document.getElementById('cAdvanceProofCurrent').textContent = '';
+  document.getElementById('cDepositProof').value = '';
+  document.getElementById('cDepositProofCurrent').textContent = '';
 
   // Editing narrows Location/Building to that contract's unit(s) — reset
   // back to "All" so every unit is selectable again for the next contract.
@@ -1320,18 +1414,21 @@ function cancelEditContract(){
   populateUnitDropdown();
 }
 
-async function uploadSignedFileIfSelected(contractId){
-  const fileInput = document.getElementById('cSignedFile');
+// Generic helpers reused by every upload slot in the app (signed contract,
+// renter ID, advance/deposit proof, payment receipts) — all share the same
+// private 'contract-files' Storage bucket, just organized by folder prefix.
+async function uploadFileToTable(fileInputId, folderPrefix, table, idColumn, id, pathColumn, nameColumn){
+  const fileInput = document.getElementById(fileInputId);
   const file = fileInput.files[0];
   if(!file) return;
-  const path = `${contractId}/${Date.now()}-${file.name}`;
+  const path = `${folderPrefix}/${id}/${Date.now()}-${file.name}`;
   const { error: upErr } = await sb.storage.from('contract-files').upload(path, file, { upsert: true });
   if(upErr){ alert('File upload failed: ' + upErr.message); return; }
-  await sb.from('contracts').update({ signed_file_path: path, signed_file_name: file.name }).eq('id', contractId);
+  await sb.from(table).update({ [pathColumn]: path, [nameColumn]: file.name }).eq(idColumn, id);
   fileInput.value = '';
 }
 
-async function viewContractFile(path){
+async function viewStoredFile(path, title){
   showPreviewOverlay('Loading file…');
   document.getElementById('previewFrame').srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
 
@@ -1342,10 +1439,18 @@ async function viewContractFile(path){
       `<body style="font-family:sans-serif;padding:40px;"><h2>Could not open file</h2><p>${error.message}</p></body>`;
     return;
   }
-  document.getElementById('previewTitle').textContent = 'Signed contract file';
+  document.getElementById('previewTitle').textContent = title || 'File';
   const frame = document.getElementById('previewFrame');
   frame.removeAttribute('srcdoc');
   frame.src = data.signedUrl;
+}
+
+async function uploadSignedFileIfSelected(contractId){
+  await uploadFileToTable('cSignedFile', 'contracts', 'contracts', 'id', contractId, 'signed_file_path', 'signed_file_name');
+}
+
+async function viewContractFile(path){
+  await viewStoredFile(path, 'Signed contract file');
 }
 
 async function saveContract(){
@@ -1400,6 +1505,8 @@ async function saveContract(){
     if(error) return alert('Error: ' + error.message);
     await sb.rpc('regenerate_schedule_from_today', { p_contract_id: editingContractId });
     await uploadSignedFileIfSelected(editingContractId);
+    await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', editingContractId, 'advance_proof_path', 'advance_proof_name');
+    await uploadFileToTable('cDepositProof', 'contracts', 'contracts', 'id', editingContractId, 'deposit_proof_path', 'deposit_proof_name');
 
     // Sync which units this contract covers
     await sb.from('contract_units').delete().eq('contract_id', editingContractId);
@@ -1430,6 +1537,8 @@ async function saveContract(){
     const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
     if(error) return alert('Error: ' + error.message);
     await uploadSignedFileIfSelected(created.id);
+    await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', created.id, 'advance_proof_path', 'advance_proof_name');
+    await uploadFileToTable('cDepositProof', 'contracts', 'contracts', 'id', created.id, 'deposit_proof_path', 'deposit_proof_name');
     await sb.from('contract_units').insert(unitIds.map(uid=>({ contract_id: created.id, unit_id: uid })));
 
     const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
@@ -1440,6 +1549,10 @@ async function saveContract(){
     document.getElementById('cTerms').value = DEFAULT_TERMS;
     document.getElementById('cSignedFile').value = '';
     document.getElementById('cSignedFileCurrent').textContent = '';
+    document.getElementById('cAdvanceProof').value = '';
+    document.getElementById('cAdvanceProofCurrent').textContent = '';
+    document.getElementById('cDepositProof').value = '';
+    document.getElementById('cDepositProofCurrent').textContent = '';
     ['cNewName','cNewAddress','cNewBusiness','cNewContact','cNewEmail'].forEach(id=>document.getElementById(id).value='');
   }
 
@@ -1515,6 +1628,11 @@ async function loadContractsTable(){
         <button class="btn secondary small" onclick="startEditContract('${c.id}')">Edit</button>
         <button class="btn secondary small" onclick="printContract('${c.id}')">Preview</button>
         ${c.signed_file_path ? `<button class="btn secondary small" onclick="viewContractFile('${c.signed_file_path}')">📄 File</button>` : ''}
+        ${c.advance_proof_path ? `<button class="btn secondary small" onclick="viewStoredFile('${c.advance_proof_path}','Advance proof')">💵 Advance</button>` : ''}
+        ${c.deposit_proof_path ? `<button class="btn secondary small" onclick="viewStoredFile('${c.deposit_proof_path}','Deposit proof')">🔒 Deposit</button>` : ''}
+        ${c.signed_at
+          ? `<button class="btn small" style="background:var(--good);" onclick="viewSignature('${c.id}')">✅ Signed</button>`
+          : `<button class="btn secondary small" onclick="sendForSignature('${c.id}')">✍️ Send for signature</button>`}
         ${c.status==='active' ? `<button class="btn danger small" onclick="cancelContract('${c.id}')">Cancel</button>` : ''}
       </td>
     </tr>
@@ -1677,18 +1795,33 @@ async function loadPaymentSchedule(){
       <td>${fmtMoney(p.amount_due)}</td>
       <td>${fmtMoney(p.amount_paid)}</td>
       <td><span class="badge b-${p.status}">${p.status}</span></td>
-      <td>${p.status!=='paid' ? `<button class="btn small" onclick="recordPayment('${p.id}', ${p.amount_due})">Record payment</button>` : ''}</td>
+      <td>${p.receipt_path ? `<button class="btn secondary small" onclick="viewStoredFile('${p.receipt_path}','Payment receipt')">🧾 View</button>` : '—'}</td>
+      <td>${p.status!=='paid' ? `<button class="btn small" onclick="startRecordPayment('${p.id}', ${p.amount_due})">Record payment</button>` : ''}</td>
     </tr>
   `).join('');
 }
 
-async function recordPayment(id, amountDue){
-  const amt = prompt('Amount paid:', amountDue);
-  if(amt===null) return;
-  await sb.from('rent_payments').update({
-    amount_paid: parseFloat(amt) || 0,
-    paid_date: new Date().toISOString().slice(0,10)
-  }).eq('id', id);
+function startRecordPayment(id, amountDue){
+  document.getElementById('paymentFormPanel').innerHTML = `
+    <div class="card" style="border-color:var(--accent);">
+      <p class="section-title">Record payment</p>
+      <div class="row">
+        <div><label>Amount paid</label><input id="payAmount" type="number" step="0.01" value="${amountDue}"></div>
+        <div><label>Date paid</label><input id="payDate" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Receipt / screenshot (optional)</label><input id="payReceipt" type="file" accept=".pdf,image/*"></div>
+      </div>
+      <button class="btn" onclick="savePayment('${id}')">Save</button>
+      <button class="btn secondary" onclick="document.getElementById('paymentFormPanel').innerHTML=''">Cancel</button>
+    </div>`;
+  document.getElementById('paymentFormPanel').scrollIntoView({behavior:'smooth'});
+}
+
+async function savePayment(id){
+  const amount_paid = parseFloat(document.getElementById('payAmount').value) || 0;
+  const paid_date = document.getElementById('payDate').value;
+  await sb.from('rent_payments').update({ amount_paid, paid_date }).eq('id', id);
+  await uploadFileToTable('payReceipt', 'payments', 'rent_payments', 'id', id, 'receipt_path', 'receipt_name');
+  document.getElementById('paymentFormPanel').innerHTML = '';
   loadPaymentSchedule(); loadDashboard();
 }
 
