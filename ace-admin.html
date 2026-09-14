@@ -173,11 +173,19 @@
     <div id="unitDetailPanel"></div>
 
     <div class="card">
-      <p class="section-title">All units</p>
-      <table>
-        <thead><tr><th>Unit</th><th>Building</th><th>Asking Rent</th><th>Status</th><th>Renter</th><th>Ends</th><th></th></tr></thead>
-        <tbody id="unitsTable"></tbody>
-      </table>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+        <p class="section-title" style="margin:0;">All units <span class="muted" id="unitsCountLabel"></span></p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <select id="unitsFilterLocation" style="width:200px;margin:0;" onchange="onUnitsFilterLocationChange()"></select>
+          <select id="unitsFilterBuilding" style="width:200px;margin:0;" onchange="loadUnitsTable()"></select>
+          <select id="unitsFilterStatus" style="width:140px;margin:0;" onchange="loadUnitsTable()">
+            <option value="">All statuses</option>
+            <option value="occupied">Occupied only</option>
+            <option value="vacant">Vacant only</option>
+          </select>
+        </div>
+      </div>
+      <div id="unitsGrouped"></div>
     </div>
   </section>
 
@@ -487,6 +495,7 @@ async function loadContractCascadingData(){
 
   populateBuildingDropdown();
   populateUnitDropdown();
+  loadUnitsFilterDropdowns();
 
   const { data: renters } = await sb.from('renters').select('id, name, business_name').order('name');
   document.getElementById('cRenterExisting').innerHTML =
@@ -1119,24 +1128,76 @@ async function deleteUnit(id){
   loadUnitsTable(); loadContractCascadingData();
 }
 
+function loadUnitsFilterDropdowns(){
+  document.getElementById('unitsFilterLocation').innerHTML =
+    `<option value="">All locations</option>` + allLocations.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
+  populateUnitsFilterBuilding();
+}
+
+function populateUnitsFilterBuilding(){
+  const locId = document.getElementById('unitsFilterLocation').value;
+  const list = locId ? allBuildings.filter(b=>b.location_id===locId) : allBuildings;
+  document.getElementById('unitsFilterBuilding').innerHTML =
+    `<option value="">All buildings</option>` + list.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
+}
+
+function onUnitsFilterLocationChange(){
+  populateUnitsFilterBuilding();
+  loadUnitsTable();
+}
+
 async function loadUnitsTable(){
+  const locFilter = document.getElementById('unitsFilterLocation').value;
+  const bldFilter = document.getElementById('unitsFilterBuilding').value;
+  const statusFilter = document.getElementById('unitsFilterStatus').value;
+
   const { data } = await sb.from('v_unit_status').select('*').order('unit_name');
-  document.getElementById('unitsTable').innerHTML = (data||[]).map(u=>`
-    <tr>
-      <td>${u.unit_name}</td>
-      <td>${u.building_name||'—'}</td>
-      <td>${fmtMoney(u.rent_amount || 0)}</td>
-      <td><span class="badge b-${u.occupancy}">${u.occupancy}</span></td>
-      <td>${u.renter_name||'—'}</td>
-      <td>${fmtDate(u.end_date)}</td>
-      <td>
-        <button class="btn small" onclick="showUnitDetail('${u.unit_id}')">View</button>
-        <button class="btn secondary small" onclick="startEditUnit('${u.unit_id}')">Edit</button>
-        <button class="btn danger small" onclick="confirmDelete(this, () => deleteUnit('${u.unit_id}'))">Delete</button>
-        <a class="action" href="javascript:void(0)" onclick="filterContractsByUnit('${u.unit_id}','${(u.unit_name||'').replace(/'/g,"\\'")}')">History</a>
-      </td>
-    </tr>
-  `).join('');
+  let units = data || [];
+  if(locFilter) units = units.filter(u=>u.location_id===locFilter);
+  if(bldFilter) units = units.filter(u=>u.building_id===bldFilter);
+  if(statusFilter) units = units.filter(u=>u.occupancy===statusFilter);
+
+  document.getElementById('unitsCountLabel').textContent = `(${units.length})`;
+
+  // Group by building so a growing portfolio reads like your actual
+  // property hierarchy instead of one long flat list.
+  const groups = {};
+  units.forEach(u=>{
+    const key = u.building_name || 'No building assigned';
+    (groups[key] ||= []).push(u);
+  });
+  const buildingNames = Object.keys(groups).sort();
+
+  document.getElementById('unitsGrouped').innerHTML = buildingNames.map(bname=>{
+    const rows = groups[bname];
+    const occCount = rows.filter(u=>u.occupancy==='occupied').length;
+    return `
+      <div style="margin-bottom:20px;">
+        <p style="font-weight:700;margin:0 0 6px 0;">${bname}
+          <span class="muted" style="font-weight:normal;">— ${occCount} occupied, ${rows.length-occCount} vacant</span>
+        </p>
+        <table>
+          <thead><tr><th>Unit</th><th>Asking Rent</th><th>Status</th><th>Renter</th><th>Ends</th><th></th></tr></thead>
+          <tbody>
+            ${rows.map(u=>`
+              <tr>
+                <td>${u.unit_name}</td>
+                <td>${fmtMoney(u.rent_amount || 0)}</td>
+                <td><span class="badge b-${u.occupancy}">${u.occupancy}</span></td>
+                <td>${u.renter_name||'—'}</td>
+                <td>${fmtDate(u.end_date)}</td>
+                <td>
+                  <button class="btn small" onclick="showUnitDetail('${u.unit_id}')">View</button>
+                  <button class="btn secondary small" onclick="startEditUnit('${u.unit_id}')">Edit</button>
+                  <button class="btn danger small" onclick="confirmDelete(this, () => deleteUnit('${u.unit_id}'))">Delete</button>
+                  <a class="action" href="javascript:void(0)" onclick="filterContractsByUnit('${u.unit_id}','${(u.unit_name||'').replace(/'/g,"\\'")}')">History</a>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }).join('') || '<p class="muted">No units match this filter.</p>';
 }
 
 // ---------- RENTERS (add or edit) ----------
