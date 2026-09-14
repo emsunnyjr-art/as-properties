@@ -305,8 +305,10 @@
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
         <p class="section-title" style="margin:0;">All contracts <span class="muted" id="filterLabel"></span></p>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <select id="contractUnitFilter" style="width:220px;margin:0;" onchange="onUnitFilterChange()"></select>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <select id="contractsFilterLocation" style="width:180px;margin:0;" onchange="onContractsFilterLocationChange()"></select>
+          <select id="contractsFilterBuilding" style="width:180px;margin:0;" onchange="onContractsFilterBuildingChange()"></select>
+          <select id="contractUnitFilter" style="width:200px;margin:0;" onchange="onUnitFilterChange()"></select>
           <button class="btn secondary small" onclick="clearUnitFilter()">Clear filter</button>
         </div>
       </div>
@@ -477,7 +479,7 @@ async function loadAll(){
   onRenterModeChange();
   onRentPeriodChange();
   await Promise.all([loadDashboard(), loadPropertyDropdowns(), loadUnitsTable(),
-    loadRenters(), loadContractCascadingData(), loadContractUnitFilterDropdown(), loadContractsTable(), loadPayContractSelect()]);
+    loadRenters(), loadContractCascadingData(), loadContractsTable(), loadPayContractSelect()]);
 }
 
 // ---------- CASCADING LOCATION -> BUILDING -> UNIT (Contracts form) ----------
@@ -496,6 +498,7 @@ async function loadContractCascadingData(){
   populateBuildingDropdown();
   populateUnitDropdown();
   loadUnitsFilterDropdowns();
+  loadContractUnitFilterDropdown();
 
   const { data: renters } = await sb.from('renters').select('id, name, business_name').order('name');
   document.getElementById('cRenterExisting').innerHTML =
@@ -1620,17 +1623,66 @@ async function saveContract(){
   loadContractsTable(); loadUnitsTable(); loadPayContractSelect(); loadDashboard(); loadRenters(); loadContractCascadingData();
 }
 
-async function loadContractUnitFilterDropdown(){
-  const { data } = await sb.from('units').select('id, unit_name').order('unit_name');
+let currentLocationFilter = null, currentBuildingFilter = null;
+
+function loadContractUnitFilterDropdown(){
+  document.getElementById('contractsFilterLocation').innerHTML =
+    `<option value="">All locations</option>` + allLocations.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
+  populateContractsFilterBuilding();
+}
+
+function populateContractsFilterBuilding(){
+  const locId = document.getElementById('contractsFilterLocation').value;
+  const list = locId ? allBuildings.filter(b=>b.location_id===locId) : allBuildings;
+  document.getElementById('contractsFilterBuilding').innerHTML =
+    `<option value="">All buildings</option>` + list.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
+  populateContractsFilterUnit();
+}
+
+function populateContractsFilterUnit(){
+  const bldId = document.getElementById('contractsFilterBuilding').value;
+  const locId = document.getElementById('contractsFilterLocation').value;
+  let list = allUnits;
+  if(bldId) list = list.filter(u=>u.building_id===bldId);
+  else if(locId){
+    const bldIds = new Set(allBuildings.filter(b=>b.location_id===locId).map(b=>b.id));
+    list = list.filter(u=>bldIds.has(u.building_id));
+  }
   document.getElementById('contractUnitFilter').innerHTML =
-    `<option value="">Filter by unit…</option>` +
-    (data||[]).map(u=>`<option value="${u.id}">${u.unit_name}</option>`).join('');
+    `<option value="">All units</option>` + list.map(u=>`<option value="${u.id}">${u.unit_name}</option>`).join('');
+}
+
+function onContractsFilterLocationChange(){
+  currentLocationFilter = document.getElementById('contractsFilterLocation').value || null;
+  currentBuildingFilter = null;
+  currentUnitFilter = null;
+  populateContractsFilterBuilding();
+  updateContractsFilterLabel();
+  loadContractsTable();
+}
+
+function onContractsFilterBuildingChange(){
+  currentBuildingFilter = document.getElementById('contractsFilterBuilding').value || null;
+  currentUnitFilter = null;
+  populateContractsFilterUnit();
+  updateContractsFilterLabel();
+  loadContractsTable();
+}
+
+function updateContractsFilterLabel(){
+  const parts = [];
+  const locSel = document.getElementById('contractsFilterLocation');
+  const bldSel = document.getElementById('contractsFilterBuilding');
+  const unitSel = document.getElementById('contractUnitFilter');
+  if(currentUnitFilter && unitSel.selectedOptions[0]) parts.push(unitSel.selectedOptions[0].textContent);
+  else if(currentBuildingFilter && bldSel.selectedOptions[0]) parts.push(bldSel.selectedOptions[0].textContent);
+  else if(currentLocationFilter && locSel.selectedOptions[0]) parts.push(locSel.selectedOptions[0].textContent);
+  document.getElementById('filterLabel').textContent = parts.length ? '— ' + parts.join(' ') : '';
 }
 
 function onUnitFilterChange(){
-  const sel = document.getElementById('contractUnitFilter');
-  currentUnitFilter = sel.value || null;
-  document.getElementById('filterLabel').textContent = currentUnitFilter ? '— ' + sel.selectedOptions[0].textContent : '';
+  currentUnitFilter = document.getElementById('contractUnitFilter').value || null;
+  updateContractsFilterLabel();
   loadContractsTable();
 }
 
@@ -1639,26 +1691,43 @@ function filterContractsByUnit(unitId, unitName){
   document.querySelector('#tabNav button[data-tab="contracts"]').classList.add('active');
   document.querySelectorAll('main > section').forEach(s=>s.classList.add('hidden'));
   document.getElementById('tab-contracts').classList.remove('hidden');
+  document.getElementById('contractsFilterLocation').value = '';
+  populateContractsFilterBuilding();
   document.getElementById('contractUnitFilter').value = unitId;
-  currentUnitFilter = unitId;
+  currentLocationFilter = null; currentBuildingFilter = null; currentUnitFilter = unitId;
   document.getElementById('filterLabel').textContent = '— ' + unitName;
   loadContractsTable();
 }
 
 function clearUnitFilter(){
-  currentUnitFilter = null;
-  document.getElementById('contractUnitFilter').value = '';
+  currentLocationFilter = null; currentBuildingFilter = null; currentUnitFilter = null;
+  document.getElementById('contractsFilterLocation').value = '';
+  populateContractsFilterBuilding();
   document.getElementById('filterLabel').textContent = '';
   loadContractsTable();
 }
 
 async function loadContractsTable(){
-  let contractIdFilter = null;
+  let unitIdsToMatch = null;
   if(currentUnitFilter){
-    const { data: cuRows } = await sb.from('contract_units').select('contract_id').eq('unit_id', currentUnitFilter);
-    contractIdFilter = (cuRows||[]).map(r=>r.contract_id);
+    unitIdsToMatch = [currentUnitFilter];
+  } else if(currentBuildingFilter){
+    unitIdsToMatch = allUnits.filter(u=>u.building_id===currentBuildingFilter).map(u=>u.id);
+  } else if(currentLocationFilter){
+    const bldIds = new Set(allBuildings.filter(b=>b.location_id===currentLocationFilter).map(b=>b.id));
+    unitIdsToMatch = allUnits.filter(u=>bldIds.has(u.building_id)).map(u=>u.id);
+  }
+
+  let contractIdFilter = null;
+  if(unitIdsToMatch){
+    if(unitIdsToMatch.length === 0){
+      document.getElementById('contractsTable').innerHTML = '<tr><td colspan="7" class="muted">No units in this filter.</td></tr>';
+      return;
+    }
+    const { data: cuRows } = await sb.from('contract_units').select('contract_id').in('unit_id', unitIdsToMatch);
+    contractIdFilter = [...new Set((cuRows||[]).map(r=>r.contract_id))];
     if(contractIdFilter.length === 0){
-      document.getElementById('contractsTable').innerHTML = '<tr><td colspan="7" class="muted">No contracts for this unit.</td></tr>';
+      document.getElementById('contractsTable').innerHTML = '<tr><td colspan="7" class="muted">No contracts for this filter.</td></tr>';
       return;
     }
   }
