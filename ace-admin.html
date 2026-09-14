@@ -352,6 +352,7 @@
       <select id="payContractSelect" onchange="loadPaymentSchedule(); loadItemizedBill();"></select>
     </div>
 
+    <div id="itemizedNotifyPanel"></div>
     <div id="itemizedBillCard"></div>
 
     <div id="paymentFormPanel"></div>
@@ -1419,20 +1420,24 @@ async function viewSignature(contractId){
     </body>`;
 }
 
-function showNotifyPanel(renterName, email, contact, message){
-  const emailHref = email ? `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent('Your lease contract')}&body=${encodeURIComponent(message)}` : null;
+function showNotifyPanel(renterName, email, contact, message, panelId, subject){
+  panelId = panelId || 'notifyPanel';
+  subject = subject || 'Your lease contract';
+  const emailHref = email ? `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}` : null;
   const viberDigits = (contact||'').replace(/[^0-9]/g,'');
   const viberHref = viberDigits ? `viber://chat?number=${viberDigits}` : null;
-  document.getElementById('notifyPanel').innerHTML = `
+  const smsHrefVal = contact ? smsHref(contact, message) : null;
+  document.getElementById(panelId).innerHTML = `
     <div class="card" style="border-color:var(--accent);">
       <p class="section-title">Notify ${renterName}?</p>
       <textarea id="notifyMessage" rows="4">${message}</textarea>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        ${smsHrefVal ? `<a class="btn" style="text-decoration:none;display:inline-block;" href="${smsHrefVal}">💬 Open SMS</a>` : ''}
         ${emailHref ? `<a class="btn" style="text-decoration:none;display:inline-block;" href="${emailHref}">📧 Open Email</a>` : `<span class="muted">No email on file</span>`}
         ${viberHref ? `<a class="btn secondary" style="text-decoration:none;display:inline-block;" href="${viberHref}">💜 Open Viber</a>` : `<span class="muted">No contact number on file</span>`}
-        <button class="btn secondary" onclick="document.getElementById('notifyPanel').innerHTML=''">Dismiss</button>
+        <button class="btn secondary" onclick="document.getElementById('${panelId}').innerHTML=''">Dismiss</button>
       </div>
-      <p class="muted">These open your email/Viber app with the message pre-filled — review and hit send yourself, nothing sends automatically.</p>
+      <p class="muted">These open your SMS/email/Viber app with the message pre-filled — review and hit send yourself, nothing sends automatically.</p>
     </div>`;
 }
 
@@ -2116,6 +2121,7 @@ async function loadItemizedBill(){
         <div><label>Receipt / screenshot (optional, attached to rent line items)</label><input id="itemizedReceipt" type="file" accept=".pdf,image/*"></div>
       </div>
       <button class="btn" onclick="collectItemizedBill('${contractId}')">Collect Payment</button>
+      <button class="btn secondary" onclick="sendItemizedBill('${contractId}')">📤 Send itemized bill</button>
     </div>`;
   updateItemizedTotal();
 }
@@ -2126,6 +2132,24 @@ function updateItemizedTotal(){
     if(document.getElementById(`billItem${i}`).checked) total += it.amount;
   });
   document.getElementById('itemizedTotal').textContent = fmtMoney(total);
+}
+
+async function sendItemizedBill(contractId){
+  const checked = itemizedBillItems.filter((it,i)=>document.getElementById(`billItem${i}`).checked);
+  if(checked.length === 0) return alert('Select at least one item first.');
+  const total = checked.reduce((sum,it)=>sum+it.amount, 0);
+
+  const { data: c } = await sb.from('contracts').select('renter_id').eq('id', contractId).single();
+  const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', c.renter_id).single();
+  const { data: cus } = await sb.from('contract_units').select('units(unit_name)').eq('contract_id', contractId);
+  const unitNames = (cus||[]).map(x=>x.units?.unit_name).filter(Boolean).join(', ');
+
+  const payText = await buildPaymentInstructionsText();
+  const lines = checked.map(it => `- ${it.label}: ${fmtMoney(it.amount)}`).join('\n');
+  const message = `Hi ${renter?.name||''}, here is your itemized bill for ${unitNames}:\n\n${lines}\n\nTotal: ${fmtMoney(total)}${payText}`;
+
+  showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number, message, 'itemizedNotifyPanel', 'Your Itemized Bill');
+  document.getElementById('itemizedNotifyPanel').scrollIntoView({behavior:'smooth'});
 }
 
 async function collectItemizedBill(contractId){
