@@ -349,8 +349,10 @@
 
     <div class="card">
       <p class="section-title">Select contract</p>
-      <select id="payContractSelect" onchange="loadPaymentSchedule()"></select>
+      <select id="payContractSelect" onchange="loadPaymentSchedule(); loadItemizedBill();"></select>
     </div>
+
+    <div id="itemizedBillCard"></div>
 
     <div id="paymentFormPanel"></div>
 
@@ -1106,7 +1108,7 @@ async function showUnitDetail(unitId){
       </table>
 
       <div class="row" style="margin-top:10px;">
-        <div><label>Type</label><select id="utilType"><option value="electric">Electric</option><option value="water">Water</option><option value="other">Other</option></select></div>
+        <div><label>Type</label><select id="utilType"><option value="electric">Electric</option><option value="water">Water</option><option value="hauling">Hauling / Trash</option><option value="other">Other</option></select></div>
         <div><label>Billing month</label><input id="utilMonth" type="month"></div>
         <div><label>Amount</label><input id="utilAmount" type="number" step="0.01"></div>
       </div>
@@ -1950,7 +1952,7 @@ async function printContract(id){
 async function loadPayContractSelect(){
   const { data } = await sb.from('contracts').select('id, start_date, units!unit_id(unit_name), renters(name)').eq('status','active').order('start_date', { ascending:false });
   document.getElementById('payContractSelect').innerHTML = (data||[]).map(c=>`<option value="${c.id}">${c.units?.unit_name} — ${c.renters?.name}</option>`).join('');
-  if(data && data.length) loadPaymentSchedule();
+  if(data && data.length){ loadPaymentSchedule(); loadItemizedBill(); }
 }
 
 // ---------- PAYMENT METHODS (GCash/Maya/Bank QR kiosk) ----------
@@ -2065,6 +2067,94 @@ async function showPaymentKiosk(context){
         `).join('')}
       </div>
     </body>`;
+}
+
+// ---------- ITEMIZED BILL (rent + utilities collected together) ----------
+let itemizedBillItems = [];
+
+async function loadItemizedBill(){
+  const contractId = document.getElementById('payContractSelect').value;
+  const card = document.getElementById('itemizedBillCard');
+  if(!contractId){ card.innerHTML = ''; return; }
+
+  const { data: rentRows } = await sb.from('rent_payments').select('*')
+    .eq('contract_id', contractId).in('status', ['pending','partial','overdue']).order('due_date');
+  const { data: cuRows } = await sb.from('contract_units').select('unit_id').eq('contract_id', contractId);
+  const unitIds = (cuRows||[]).map(r=>r.unit_id);
+  const { data: utilRows } = unitIds.length
+    ? await sb.from('utilities').select('*').in('unit_id', unitIds).eq('status','unpaid').order('billing_month')
+    : { data: [] };
+
+  itemizedBillItems = [
+    ...(rentRows||[]).map(r => ({ kind:'rent', id:r.id, label:`Rent — ${fmtDate(r.period_start)} to ${fmtDate(r.period_end)}`, amount: Number(r.amount_due) - Number(r.amount_paid) })),
+    ...(utilRows||[]).map(u => ({ kind:'utility', id:u.id, label:`${u.utility_type.charAt(0).toUpperCase()+u.utility_type.slice(1)} — ${new Date(u.billing_month+'T00:00:00').toLocaleDateString(undefined,{month:'short',year:'numeric'})}`, amount: Number(u.amount) }))
+  ];
+
+  if(itemizedBillItems.length === 0){
+    card.innerHTML = `<div class="card"><p class="section-title">Itemized bill</p><p class="muted">Nothing outstanding for this contract right now.</p></div>`;
+    return;
+  }
+
+  card.innerHTML = `
+    <div class="card" style="border-color:var(--accent);">
+      <p class="section-title">Itemized bill — collect in one go</p>
+      <table>
+        <thead><tr><th></th><th>Item</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${itemizedBillItems.map((it,i)=>`
+            <tr>
+              <td><input type="checkbox" id="billItem${i}" checked onchange="updateItemizedTotal()" style="width:auto;"></td>
+              <td>${it.label}</td>
+              <td>${fmtMoney(it.amount)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <p style="font-size:20px;font-weight:700;margin:12px 0;">Total: <span id="itemizedTotal"></span></p>
+      <div class="row">
+        <div><label>Date collected</label><input id="itemizedDate" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Receipt / screenshot (optional, attached to rent line items)</label><input id="itemizedReceipt" type="file" accept=".pdf,image/*"></div>
+      </div>
+      <button class="btn" onclick="collectItemizedBill('${contractId}')">Collect Payment</button>
+    </div>`;
+  updateItemizedTotal();
+}
+
+function updateItemizedTotal(){
+  let total = 0;
+  itemizedBillItems.forEach((it,i)=>{
+    if(document.getElementById(`billItem${i}`).checked) total += it.amount;
+  });
+  document.getElementById('itemizedTotal').textContent = fmtMoney(total);
+}
+
+async function collectItemizedBill(contractId){
+  const paid_date = document.getElementById('itemizedDate').value;
+  const checked = itemizedBillItems.filter((it,i)=>document.getElementById(`billItem${i}`).checked);
+  if(checked.length === 0) return alert('Select at least one item to collect.');
+
+  let receiptPath = null, receiptName = null;
+  const file = document.getElementById('itemizedReceipt').files[0];
+  if(file){
+    const path = `payments/${contractId}/${Date.now()}-${file.name}`;
+    const { error: upErr } = await sb.storage.from('contract-files').upload(path, file);
+    if(upErr){ alert('Receipt upload failed: ' + upErr.message); }
+    else { receiptPath = path; receiptName = file.name; }
+  }
+
+  for(const it of checked){
+    if(it.kind === 'rent'){
+      const update = { paid_date };
+      const { data: current } = await sb.from('rent_payments').select('amount_due').eq('id', it.id).single();
+      update.amount_paid = current.amount_due;
+      if(receiptPath){ update.receipt_path = receiptPath; update.receipt_name = receiptName; }
+      await sb.from('rent_payments').update(update).eq('id', it.id);
+    } else {
+      await sb.from('utilities').update({ status:'paid', paid_date }).eq('id', it.id);
+    }
+  }
+
+  loadItemizedBill(); loadPaymentSchedule(); loadDashboard();
 }
 
 async function loadPaymentSchedule(){
