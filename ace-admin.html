@@ -323,6 +323,31 @@
   <!-- ============ PAYMENTS ============ -->
   <section id="tab-payments" class="hidden">
     <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <p class="section-title" style="margin:0;">Payment methods (GCash / Maya / Bank)</p>
+        <button class="btn small" onclick="showPaymentKiosk()">💳 Show payment kiosk</button>
+      </div>
+      <p class="muted">Upload the QR codes you already have in your GCash/Maya/banking app — these get shown and referenced automatically in every reminder sent to renters. Payments still need to be recorded manually once received.</p>
+
+      <div class="row" style="margin-top:10px;">
+        <div><label>Type</label>
+          <select id="pmType"><option value="gcash">GCash</option><option value="maya">Maya</option><option value="bank">Bank</option><option value="other">Other</option></select>
+        </div>
+        <div><label>Label</label><input id="pmLabel" placeholder="e.g. GCash — Mario M."></div>
+        <div><label>Account name</label><input id="pmAccountName"></div>
+        <div><label>Account / mobile number</label><input id="pmAccountNumber"></div>
+        <div><label>QR code image</label><input id="pmQrFile" type="file" accept="image/*"></div>
+      </div>
+      <button class="btn" id="pmSubmitBtn" onclick="savePaymentMethod()">Add Payment Method</button>
+      <button class="btn secondary hidden" id="pmCancelEditBtn" onclick="cancelEditPaymentMethod()">Cancel edit</button>
+
+      <table style="margin-top:14px;">
+        <thead><tr><th>Label</th><th>Account</th><th>Active</th><th></th></tr></thead>
+        <tbody id="paymentMethodsTable"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
       <p class="section-title">Select contract</p>
       <select id="payContractSelect" onchange="loadPaymentSchedule()"></select>
     </div>
@@ -446,6 +471,7 @@ function numberToWords(num){
 }
 
 let currentUnitFilter = null;
+let reminderContextMap = {};
 let editingContractId = null;
 let allLocations = [], allBuildings = [], allUnits = [];
 let addressSearchTimer = null;
@@ -479,7 +505,7 @@ async function loadAll(){
   onRenterModeChange();
   onRentPeriodChange();
   await Promise.all([loadDashboard(), loadPropertyDropdowns(), loadUnitsTable(),
-    loadRenters(), loadContractCascadingData(), loadContractsTable(), loadPayContractSelect()]);
+    loadRenters(), loadContractCascadingData(), loadContractsTable(), loadPayContractSelect(), loadPaymentMethods()]);
 }
 
 // ---------- CASCADING LOCATION -> BUILDING -> UNIT (Contracts form) ----------
@@ -606,6 +632,9 @@ async function loadDashboard(){
   if(!reminders || reminders.length===0){ empty.classList.remove('hidden'); return; }
   empty.classList.add('hidden');
 
+  const payText = await buildPaymentInstructionsText();
+  reminderContextMap = {};
+
   reminders.forEach(r=>{
     const isRentType = r.reminder_type === 'rent_payment' || r.reminder_type === 'rent_due' || r.reminder_type === 'rent_overdue';
     const isOverdue = r.reminder_type === 'rent_overdue' || (r.reminder_type === 'rent_payment' && r.days_offset > 0);
@@ -620,7 +649,8 @@ async function loadDashboard(){
     const badgeClass = isOverdue ? 'b-overdue' : r.reminder_type==='contract_expiring' ? 'b-expiring' : 'b-pending';
     const msg = r.reminder_type==='contract_expiring'
       ? `Hi ${r.renter_name}, this is a reminder that your lease for ${r.unit_name} ends on ${fmtDate(r.target_date)}. Please let us know your plans.`
-      : `Hi ${r.renter_name}, this is a reminder that rent of ${fmtMoney(r.amount_due)} for ${r.unit_name} was due ${fmtDate(r.target_date)}. Kindly settle at your earliest convenience.`;
+      : `Hi ${r.renter_name}, this is a reminder that rent of ${fmtMoney(r.amount_due)} for ${r.unit_name} was due ${fmtDate(r.target_date)}. Kindly settle at your earliest convenience.${payText}`;
+    reminderContextMap[r.reminder_id] = { amount: r.amount_due, renterName: r.renter_name, unitName: r.unit_name, dueDate: r.target_date };
 
     const div = document.createElement('div');
     div.className = 'reminder-item';
@@ -633,6 +663,7 @@ async function loadDashboard(){
       <div>
         <a class="action" href="${telHref(r.contact_number)}">📞 Call</a>
         <a class="action" href="${smsHref(r.contact_number, msg)}">💬 SMS</a>
+        ${r.amount_due ? `<button class="btn secondary small" onclick="showPaymentKiosk(reminderContextMap['${r.reminder_id}'])">💳 Pay</button>` : ''}
         ${r.rent_payment_id ? `<button class="btn small" onclick="markReminderPaid('${r.rent_payment_id}')">✅ Mark paid</button>` : ''}
         <button class="btn secondary small" onclick="ackReminder('${r.reminder_id}')">${isRentType ? 'Hide for today' : 'Mark sent'}</button>
       </div>
@@ -1325,15 +1356,23 @@ async function loadRenters(){
 
 // ---------- CONTRACTS: create / edit / notify ----------
 
-function buildNotifyMessage(kind, renterName, unitName, c){
+async function buildPaymentInstructionsText(){
+  const { data: methods } = await sb.from('payment_methods').select('*').eq('is_active', true).order('method_type');
+  if(!methods || methods.length === 0) return '';
+  const lines = methods.map(pm => `- ${pm.label}${pm.account_number ? ': ' + pm.account_number : ''}${pm.account_name ? ' (' + pm.account_name + ')' : ''}`);
+  return `\n\nYou can pay via:\n${lines.join('\n')}`;
+}
+
+async function buildNotifyMessage(kind, renterName, unitName, c){
+  const payText = await buildPaymentInstructionsText();
   if(kind === 'new'){
     return `Hi ${renterName}, your lease for ${unitName} has been set up. `+
       `Rent: ${fmtMoney(c.rent_amount)} (${c.rent_period}), starting ${fmtDate(c.start_date)} `+
-      `through ${fmtDate(c.end_date)}. Please reach out if you have any questions. Thank you!`;
+      `through ${fmtDate(c.end_date)}. Please reach out if you have any questions. Thank you!${payText}`;
   }
   return `Hi ${renterName}, your contract for ${unitName} has been updated. `+
     `New rent: ${fmtMoney(c.rent_amount)} (${c.rent_period}), effective now, running through ${fmtDate(c.end_date)}. `+
-    `Please reach out if you have any questions. Thank you!`;
+    `Please reach out if you have any questions. Thank you!${payText}`;
 }
 
 async function sendForSignature(contractId){
@@ -1579,7 +1618,7 @@ async function saveContract(){
     const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
     const { data: fresh } = await sb.from('contracts').select('*').eq('id', editingContractId).single();
     showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number,
-      buildNotifyMessage('update', renter?.name||'', unitNamesJoined, fresh));
+      await buildNotifyMessage('update', renter?.name||'', unitNamesJoined, fresh));
 
     cancelEditContract();
   } else {
@@ -1607,7 +1646,7 @@ async function saveContract(){
 
     const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
     showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number,
-      buildNotifyMessage('new', renter?.name||'', unitNamesJoined, created));
+      await buildNotifyMessage('new', renter?.name||'', unitNamesJoined, created));
 
     document.getElementById('cNotes').value='';
     document.getElementById('cTerms').value = DEFAULT_TERMS;
@@ -1912,6 +1951,120 @@ async function loadPayContractSelect(){
   const { data } = await sb.from('contracts').select('id, start_date, units!unit_id(unit_name), renters(name)').eq('status','active').order('start_date', { ascending:false });
   document.getElementById('payContractSelect').innerHTML = (data||[]).map(c=>`<option value="${c.id}">${c.units?.unit_name} — ${c.renters?.name}</option>`).join('');
   if(data && data.length) loadPaymentSchedule();
+}
+
+// ---------- PAYMENT METHODS (GCash/Maya/Bank QR kiosk) ----------
+let editingPaymentMethodId = null;
+
+async function loadPaymentMethods(){
+  const { data } = await sb.from('payment_methods').select('*').order('created_at');
+  document.getElementById('paymentMethodsTable').innerHTML = (data||[]).map(pm=>`
+    <tr>
+      <td>${pm.label}</td>
+      <td>${pm.account_number||'—'}${pm.account_name ? ' ('+pm.account_name+')' : ''}</td>
+      <td><span class="badge b-${pm.is_active?'active':'cancelled'}">${pm.is_active?'active':'inactive'}</span></td>
+      <td>
+        ${pm.qr_image_path ? `<button class="btn secondary small" onclick="viewStoredFile('${pm.qr_image_path}','${pm.label.replace(/'/g,"\\'")} QR')">View QR</button>` : ''}
+        <button class="btn secondary small" onclick="startEditPaymentMethod('${pm.id}')">Edit</button>
+        <button class="btn danger small" onclick="confirmDelete(this, () => deletePaymentMethod('${pm.id}'))">Delete</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" class="muted">No payment methods added yet.</td></tr>';
+}
+
+async function savePaymentMethod(){
+  const method_type = document.getElementById('pmType').value;
+  const label = document.getElementById('pmLabel').value.trim();
+  const account_name = document.getElementById('pmAccountName').value.trim();
+  const account_number = document.getElementById('pmAccountNumber').value.trim();
+  if(!label) return alert('Label is required');
+
+  let pmId = editingPaymentMethodId;
+  if(pmId){
+    await sb.from('payment_methods').update({ method_type, label, account_name, account_number }).eq('id', pmId);
+  } else {
+    const { data: created, error } = await sb.from('payment_methods').insert({ method_type, label, account_name, account_number }).select().single();
+    if(error) return alert('Error: ' + error.message);
+    pmId = created.id;
+  }
+  await uploadFileToTable('pmQrFile', 'payment-qr', 'payment_methods', 'id', pmId, 'qr_image_path', 'qr_image_name');
+  cancelEditPaymentMethod();
+  loadPaymentMethods();
+}
+
+async function startEditPaymentMethod(id){
+  const { data: pm } = await sb.from('payment_methods').select('*').eq('id', id).single();
+  if(!pm) return;
+  editingPaymentMethodId = id;
+  document.getElementById('pmType').value = pm.method_type;
+  document.getElementById('pmLabel').value = pm.label;
+  document.getElementById('pmAccountName').value = pm.account_name || '';
+  document.getElementById('pmAccountNumber').value = pm.account_number || '';
+  document.getElementById('pmQrFile').value = '';
+  document.getElementById('pmSubmitBtn').textContent = 'Update Payment Method';
+  document.getElementById('pmCancelEditBtn').classList.remove('hidden');
+  document.getElementById('pmSubmitBtn').scrollIntoView({behavior:'smooth'});
+}
+
+function cancelEditPaymentMethod(){
+  editingPaymentMethodId = null;
+  document.getElementById('pmLabel').value = '';
+  document.getElementById('pmAccountName').value = '';
+  document.getElementById('pmAccountNumber').value = '';
+  document.getElementById('pmQrFile').value = '';
+  document.getElementById('pmSubmitBtn').textContent = 'Add Payment Method';
+  document.getElementById('pmCancelEditBtn').classList.add('hidden');
+}
+
+async function deletePaymentMethod(id){
+  const { error } = await sb.from('payment_methods').delete().eq('id', id);
+  if(error) return alert('Could not delete: ' + error.message);
+  loadPaymentMethods();
+}
+
+// Shows every active payment method's QR + account details together —
+// hand your phone to a renter, or screen-share this, so they can scan
+// and pay on the spot.
+async function showPaymentKiosk(context){
+  showPreviewOverlay('Payment kiosk');
+  document.getElementById('previewFrame').srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
+
+  const { data: methods } = await sb.from('payment_methods').select('*').eq('is_active', true).order('method_type');
+  if(!methods || methods.length === 0){
+    document.getElementById('previewFrame').srcdoc = '<body style="font-family:sans-serif;padding:40px;"><h2>No payment methods added yet</h2><p>Add one in the Payments tab first.</p></body>';
+    return;
+  }
+
+  const withUrls = await Promise.all(methods.map(async pm=>{
+    if(!pm.qr_image_path) return { ...pm, qrUrl: null };
+    const { data } = await sb.storage.from('contract-files').createSignedUrl(pm.qr_image_path, 3600);
+    return { ...pm, qrUrl: data?.signedUrl || null };
+  }));
+
+  const amountBanner = context ? `
+    <div style="background:#eef6ff;border:1px solid #bcdcff;border-radius:12px;padding:16px;margin:0 auto 20px auto;max-width:400px;">
+      <p style="margin:0;font-size:13px;color:#555;">Amount due${context.unitName ? ' — '+context.unitName : ''}${context.renterName ? ' ('+context.renterName+')' : ''}</p>
+      <p style="margin:4px 0 0 0;font-size:28px;font-weight:700;color:#111;">${fmtMoney(context.amount)}</p>
+      ${context.dueDate ? `<p style="margin:2px 0 0 0;font-size:13px;color:#555;">Due ${fmtDate(context.dueDate)}</p>` : ''}
+    </div>
+    <p style="max-width:500px;margin:0 auto 20px auto;font-size:12px;color:#999;">
+      Note: GCash/Maya QR codes don't auto-fill this amount when scanned — the payer still types it in themselves. Show them this amount alongside the QR.
+    </p>` : '';
+
+  document.getElementById('previewFrame').srcdoc = `
+    <body style="font-family:sans-serif;padding:30px;text-align:center;">
+      <h1 style="font-size:22px;">Scan to Pay</h1>
+      ${amountBanner}
+      <div style="display:flex;flex-wrap:wrap;gap:24px;justify-content:center;margin-top:20px;">
+        ${withUrls.map(pm => `
+          <div style="border:1px solid #ddd;border-radius:12px;padding:20px;width:240px;">
+            <h3 style="margin:0 0 8px 0;">${pm.label}</h3>
+            ${pm.qrUrl ? `<img src="${pm.qrUrl}" style="width:100%;border-radius:8px;">` : '<p style="color:#999;">No QR image uploaded</p>'}
+            <p style="margin-top:10px;font-size:14px;">${pm.account_number||''}${pm.account_name ? '<br>'+pm.account_name : ''}</p>
+          </div>
+        `).join('')}
+      </div>
+    </body>`;
 }
 
 async function loadPaymentSchedule(){
