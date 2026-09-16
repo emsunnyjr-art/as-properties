@@ -150,6 +150,10 @@
         <div><label>Name</label><input id="bldName"></div>
         <div><label>Description</label><input id="bldDesc"></div>
       </div>
+      <div><label>Floor plan / layout drawing (optional)</label>
+        <input id="bldFloorPlan" type="file" accept="image/*,.pdf">
+        <p class="muted" id="bldFloorPlanCurrent" style="margin:2px 0 8px 0;"></p>
+      </div>
       <button class="btn" id="bldSubmitBtn" onclick="saveBuilding()">Add Building</button>
       <button class="btn secondary hidden" id="cancelBldEditBtn" onclick="cancelEditBuilding()">Cancel edit</button>
       <table style="margin-top:14px;">
@@ -231,8 +235,11 @@
       </div>
 
       <div style="margin-top:8px;">
-        <label>Unit(s) — tick more than one for a combined lease (one business renting several units together)</label>
-        <div id="cUnitChecklist" style="max-height:160px;overflow-y:auto;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px;"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <label style="margin:0;">Unit(s) — tick more than one for a combined lease (one business renting several units together)</label>
+          <button type="button" class="btn secondary small hidden" id="cFloorPlanBtn" onclick="viewFloorPlan(document.getElementById('cBuilding').value)">🗺️ View floor plan</button>
+        </div>
+        <div id="cUnitChecklist" style="max-height:160px;overflow-y:auto;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;"></div>
       </div>
 
       <div class="row" style="margin-top:8px;">
@@ -515,7 +522,7 @@ async function loadAll(){
 async function loadContractCascadingData(){
   const [{ data: locs }, { data: blds }, { data: units }] = await Promise.all([
     sb.from('locations').select('id, name').order('name'),
-    sb.from('buildings').select('id, name, location_id').order('name'),
+    sb.from('buildings').select('id, name, location_id, floor_plan_path').order('name'),
     sb.from('units').select('id, unit_name, price, building_id').order('unit_name')
   ]);
   allLocations = locs||[]; allBuildings = blds||[]; allUnits = units||[];
@@ -564,6 +571,9 @@ function populateUnitDropdown(){
     </label>
   `).join('') || '<span class="muted">No units in this filter.</span>';
   onUnitChange();
+
+  const selectedBuilding = allBuildings.find(b=>b.id===bldId);
+  document.getElementById('cFloorPlanBtn').classList.toggle('hidden', !(selectedBuilding && selectedBuilding.floor_plan_path));
 }
 
 function getSelectedUnitIds(){
@@ -884,6 +894,7 @@ function loadBuildingsTable(blds){
     <tr>
       <td>${b.name}</td><td>${b.locations?.name||'—'}</td><td>${b.description||'—'}</td>
       <td>
+        ${b.floor_plan_path ? `<button class="btn secondary small" onclick="viewFloorPlan('${b.id}')">🗺️ Floor plan</button>` : ''}
         <button class="btn secondary small" onclick="startEditBuilding('${b.id}')">Edit</button>
         <button class="btn danger small" onclick="confirmDelete(this, () => deleteBuilding('${b.id}'))">Delete</button>
       </td>
@@ -975,11 +986,15 @@ async function saveBuilding(){
   const name = document.getElementById('bldName').value.trim();
   const description = document.getElementById('bldDesc').value.trim();
   if(!name) return alert('Name required');
-  if(editingBuildingId){
-    await sb.from('buildings').update({ location_id, name, description }).eq('id', editingBuildingId);
+  let bldId = editingBuildingId;
+  if(bldId){
+    await sb.from('buildings').update({ location_id, name, description }).eq('id', bldId);
   } else {
-    await sb.from('buildings').insert({ location_id, name, description });
+    const { data: created, error } = await sb.from('buildings').insert({ location_id, name, description }).select().single();
+    if(error) return alert('Error: ' + error.message);
+    bldId = created.id;
   }
+  await uploadFileToTable('bldFloorPlan', 'floor-plans', 'buildings', 'id', bldId, 'floor_plan_path', 'floor_plan_name');
   cancelEditBuilding();
   loadPropertyDropdowns(); loadContractCascadingData();
 }
@@ -991,6 +1006,8 @@ async function startEditBuilding(id){
   document.getElementById('bldLocation').value = b.location_id || '';
   document.getElementById('bldName').value = b.name;
   document.getElementById('bldDesc').value = b.description || '';
+  document.getElementById('bldFloorPlan').value = '';
+  document.getElementById('bldFloorPlanCurrent').textContent = b.floor_plan_name ? `Current: ${b.floor_plan_name} (choose a new file to replace it)` : 'No floor plan uploaded yet.';
   document.getElementById('bldFormTitle').textContent = 'Editing building';
   document.getElementById('bldSubmitBtn').textContent = 'Update Building';
   document.getElementById('cancelBldEditBtn').classList.remove('hidden');
@@ -1000,6 +1017,8 @@ async function startEditBuilding(id){
 function cancelEditBuilding(){
   editingBuildingId = null;
   document.getElementById('bldName').value=''; document.getElementById('bldDesc').value='';
+  document.getElementById('bldFloorPlan').value = '';
+  document.getElementById('bldFloorPlanCurrent').textContent = '';
   document.getElementById('bldFormTitle').textContent = 'Add building';
   document.getElementById('bldSubmitBtn').textContent = 'Add Building';
   document.getElementById('cancelBldEditBtn').classList.add('hidden');
@@ -1561,6 +1580,50 @@ async function uploadSignedFileIfSelected(contractId){
 
 async function viewContractFile(path){
   await viewStoredFile(path, 'Signed contract file');
+}
+
+// Floor plan viewer with pinch/button zoom, since a small static image
+// isn't much use as a reference drawing without being able to zoom in.
+async function viewFloorPlan(buildingId){
+  showPreviewOverlay('Floor plan');
+  document.getElementById('previewFrame').srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
+
+  const { data: b } = await sb.from('buildings').select('name, floor_plan_path').eq('id', buildingId).single();
+  if(!b || !b.floor_plan_path){
+    document.getElementById('previewFrame').srcdoc = '<body style="font-family:sans-serif;padding:40px;"><h2>No floor plan uploaded for this building yet.</h2><p>Add one from the Properties tab.</p></body>';
+    return;
+  }
+  document.getElementById('previewTitle').textContent = `${b.name} — Floor Plan`;
+
+  const { data, error } = await sb.storage.from('contract-files').createSignedUrl(b.floor_plan_path, 3600);
+  if(error){
+    document.getElementById('previewFrame').srcdoc = `<body style="font-family:sans-serif;padding:40px;"><p>Could not load floor plan: ${error.message}</p></body>`;
+    return;
+  }
+
+  const frame = document.getElementById('previewFrame');
+  frame.removeAttribute('src');
+  frame.srcdoc = `
+    <html><head><style>
+      body{margin:0;background:#1a1a1a;overflow:auto;touch-action:pinch-zoom;}
+      #wrap{display:flex;justify-content:center;padding:70px 20px 20px 20px;min-height:100vh;box-sizing:border-box;}
+      img{transition:width .15s;}
+      .controls{position:fixed;top:12px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:10;}
+      button{padding:10px 18px;border-radius:8px;border:none;background:#fff;font-weight:600;font-size:16px;cursor:pointer;}
+    </style></head>
+    <body>
+      <div class="controls">
+        <button onclick="zoom(0.8)">－ Zoom Out</button>
+        <button onclick="reset()">Reset</button>
+        <button onclick="zoom(1.25)">＋ Zoom In</button>
+      </div>
+      <div id="wrap"><img id="fp" src="${data.signedUrl}" style="width:100%;max-width:900px;"></div>
+      <script>
+        let scale = 100;
+        function zoom(f){ scale = Math.max(20, Math.min(500, scale * f)); document.getElementById('fp').style.width = scale + '%'; document.getElementById('fp').style.maxWidth = 'none'; }
+        function reset(){ scale = 100; document.getElementById('fp').style.width = '100%'; document.getElementById('fp').style.maxWidth = '900px'; }
+      <\/script>
+    </body></html>`;
 }
 
 async function saveContract(){
