@@ -425,6 +425,18 @@ function fmtDate(d){ return d ? new Date(d+'T00:00:00').toLocaleDateString() : '
 function telHref(num){ return 'tel:' + (num||'').replace(/[^0-9+]/g,''); }
 function smsHref(num, msg){ return 'sms:' + (num||'').replace(/[^0-9+]/g,'') + (msg ? ('?&body=' + encodeURIComponent(msg)) : ''); }
 
+// Viber's own docs require international format with country code, no
+// leading zero, no plus sign (e.g. 639171234567) — a plain PH number
+// like 09171234567 gets rejected outright ("address is invalid").
+function viberNumber(raw){
+  const digits = (raw||'').replace(/[^0-9]/g,'');
+  if(!digits) return null;
+  if(digits.startsWith('63') && digits.length === 12) return digits;
+  if(digits.startsWith('0') && digits.length === 11) return '63' + digits.slice(1);
+  if(digits.startsWith('9') && digits.length === 10) return '63' + digits;
+  return digits;
+}
+
 // Set these to match how you sign as Lessor — used on every printed contract.
 const LESSOR_NAME = "Mario S. Moncada Jr.";
 const LESSOR_ADDRESS = "Block 8 Lot 20-21, Villa Tanza Subd, Biga, Tanza, Cavite";
@@ -1467,7 +1479,7 @@ async function trySendEmail(email, subject, message){
 function showNotifyPanel(renterName, email, contact, message, panelId, subject, emailStatus){
   panelId = panelId || 'notifyPanel';
   subject = subject || 'Your lease contract';
-  const viberDigits = (contact||'').replace(/[^0-9]/g,'');
+  const viberDigits = viberNumber(contact);
   const viberHref = viberDigits ? `viber://chat?number=${viberDigits}` : null;
   const smsHrefVal = contact ? smsHref(contact, message) : null;
   const emailHref = email ? `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}` : null;
