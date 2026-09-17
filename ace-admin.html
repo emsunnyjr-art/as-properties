@@ -65,17 +65,13 @@
 </div>
 
 <div id="lockScreen" style="position:fixed;inset:0;background:var(--bg);z-index:2000;display:flex;align-items:center;justify-content:center;">
-  <div class="card" style="width:280px;">
+  <div class="card" style="width:300px;">
     <p class="section-title" style="text-align:center;">🔒 Ace Properties</p>
-    <input id="pinInput" type="password" inputmode="numeric" placeholder="Enter PIN" style="text-align:center;font-size:20px;letter-spacing:4px;" onkeydown="if(event.key==='Enter') submitPin()">
-    <button class="btn" style="width:100%;" onclick="submitPin()">Unlock</button>
-    <p class="muted" id="pinError" style="text-align:center;color:var(--bad);"></p>
-    <p class="muted" style="text-align:center;margin-top:14px;"><a href="javascript:void(0)" onclick="showChangePin()" style="color:var(--accent);">Change PIN</a></p>
-    <div id="changePinForm" class="hidden" style="margin-top:10px;">
-      <input id="oldPinInput" type="password" inputmode="numeric" placeholder="Current PIN">
-      <input id="newPinInput" type="password" inputmode="numeric" placeholder="New PIN">
-      <button class="btn secondary" style="width:100%;" onclick="submitChangePin()">Update PIN</button>
-    </div>
+    <input id="loginEmail" type="email" placeholder="Email" autocomplete="username">
+    <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter') submitLogin()">
+    <button class="btn" style="width:100%;" onclick="submitLogin()">Log In</button>
+    <p class="muted" id="loginError" style="text-align:center;color:var(--bad);"></p>
+    <p class="muted" style="text-align:center;margin-top:10px;">No account? Ask the property owner to create one for you in Supabase.</p>
   </div>
 </div>
 
@@ -85,10 +81,13 @@
     <small id="todayLabel"></small>
   </div>
   <div>
-    <button class="btn secondary small" onclick="lockApp()">🔒 Lock</button>
+    <button class="btn secondary small" onclick="showChangePassword()">🔑 Change Password</button>
+    <button class="btn secondary small" onclick="logoutApp()">🔒 Log out</button>
     <button class="btn secondary small" onclick="loadAll()">Refresh</button>
   </div>
 </header>
+
+<div id="changePasswordPanel"></div>
 
 <nav id="tabNav">
   <button data-tab="dashboard" class="active">Dashboard</button>
@@ -2326,52 +2325,65 @@ async function savePayment(id){
   loadPaymentSchedule(); loadDashboard();
 }
 
-// ---------- PIN gate ----------
-function lockApp(){
-  localStorage.removeItem('aceUnlocked');
-  document.getElementById('lockScreen').style.display = 'flex';
-  document.getElementById('pinInput').value = '';
-  document.getElementById('pinInput').focus();
+// ---------- Login gate (real Supabase Auth — accounts you create) ----------
+function showChangePassword(){
+  document.getElementById('changePasswordPanel').innerHTML = `
+    <div class="card" style="border-color:var(--accent);max-width:340px;">
+      <p class="section-title">Change your password</p>
+      <input id="newPassword1" type="password" placeholder="New password" autocomplete="new-password">
+      <input id="newPassword2" type="password" placeholder="Confirm new password" autocomplete="new-password">
+      <p class="muted" id="changePasswordError" style="color:var(--bad);"></p>
+      <button class="btn" onclick="submitChangePassword()">Update Password</button>
+      <button class="btn secondary" onclick="document.getElementById('changePasswordPanel').innerHTML=''">Cancel</button>
+    </div>`;
 }
 
-async function submitPin(){
-  const pin = document.getElementById('pinInput').value.trim();
-  if(!pin) return;
-  const { data: ok, error } = await sb.rpc('verify_app_pin', { input_pin: pin });
-  if(error || !ok){
-    document.getElementById('pinError').textContent = 'Incorrect PIN.';
+async function submitChangePassword(){
+  const p1 = document.getElementById('newPassword1').value;
+  const p2 = document.getElementById('newPassword2').value;
+  if(!p1 || p1.length < 6) return document.getElementById('changePasswordError').textContent = 'Password must be at least 6 characters.';
+  if(p1 !== p2) return document.getElementById('changePasswordError').textContent = 'Passwords do not match.';
+
+  const { error } = await sb.auth.updateUser({ password: p1 });
+  if(error){
+    document.getElementById('changePasswordError').textContent = error.message;
     return;
   }
-  localStorage.setItem('aceUnlocked', 'true');
+  document.getElementById('changePasswordPanel').innerHTML = '<p class="muted" style="color:var(--good);">✅ Password updated.</p>';
+}
+
+async function logoutApp(){
+  await sb.auth.signOut();
+  document.getElementById('lockScreen').style.display = 'flex';
+  document.getElementById('loginEmail').value = '';
+  document.getElementById('loginPassword').value = '';
+  document.getElementById('loginEmail').focus();
+}
+
+async function submitLogin(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  if(!email || !password) return;
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){
+    document.getElementById('loginError').textContent = error.message;
+    return;
+  }
   document.getElementById('lockScreen').style.display = 'none';
-  document.getElementById('pinError').textContent = '';
+  document.getElementById('loginError').textContent = '';
   loadAll();
-}
-
-function showChangePin(){
-  document.getElementById('changePinForm').classList.remove('hidden');
-}
-
-async function submitChangePin(){
-  const oldPin = document.getElementById('oldPinInput').value.trim();
-  const newPin = document.getElementById('newPinInput').value.trim();
-  if(!oldPin || !newPin) return alert('Fill in both fields.');
-  const { data: ok, error } = await sb.rpc('set_app_pin', { old_pin: oldPin, new_pin: newPin });
-  if(error || !ok){ alert('Current PIN is incorrect.'); return; }
-  alert('PIN updated.');
-  document.getElementById('changePinForm').classList.add('hidden');
-  document.getElementById('oldPinInput').value = '';
-  document.getElementById('newPinInput').value = '';
 }
 
 // ---------- init ----------
 if(sb){
-  if(localStorage.getItem('aceUnlocked') === 'true'){
-    document.getElementById('lockScreen').style.display = 'none';
-    loadAll();
-  } else {
-    document.getElementById('pinInput').focus();
-  }
+  sb.auth.getSession().then(({ data: { session } }) => {
+    if(session){
+      document.getElementById('lockScreen').style.display = 'none';
+      loadAll();
+    } else {
+      document.getElementById('loginEmail').focus();
+    }
+  });
 }
 </script>
 
