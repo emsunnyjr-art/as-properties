@@ -1426,6 +1426,37 @@ async function buildNotifyMessage(kind, renterName, unitName, c){
     `Please reach out if you have any questions. Thank you!${payText}`;
 }
 
+// Sends a tap-to-open link straight to whichever uploaded files exist on
+// this contract (signed copy, advance/deposit proof) — Viber/SMS links
+// can't carry an actual attachment, so this sends a private link to the
+// file instead, valid for 7 days (long enough for the tenant to get to it).
+async function sendContractFiles(contractId){
+  const { data: c } = await sb.from('contracts').select('signed_file_path, signed_file_name, advance_proof_path, advance_proof_name, deposit_proof_path, deposit_proof_name, renter_id').eq('id', contractId).single();
+  if(!c) return;
+
+  const files = [
+    c.signed_file_path && { label: 'Signed contract', path: c.signed_file_path },
+    c.advance_proof_path && { label: 'Advance proof', path: c.advance_proof_path },
+    c.deposit_proof_path && { label: 'Deposit proof', path: c.deposit_proof_path }
+  ].filter(Boolean);
+  if(files.length === 0) return alert('No files uploaded on this contract yet.');
+
+  const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', c.renter_id).single();
+  const { data: cus } = await sb.from('contract_units').select('units(unit_name)').eq('contract_id', contractId);
+  const unitNames = (cus||[]).map(x=>x.units?.unit_name).filter(Boolean).join(', ');
+
+  const linked = await Promise.all(files.map(async f=>{
+    const { data, error } = await sb.storage.from('contract-files').createSignedUrl(f.path, 60*60*24*7); // 7 days
+    return error ? null : `- ${f.label}: ${data.signedUrl}`;
+  }));
+  const lines = linked.filter(Boolean).join('\n');
+  if(!lines) return alert('Could not generate links for these files.');
+
+  const message = `Hi ${renter?.name||''}, here are your document(s) for ${unitNames}:\n\n${lines}\n\n(These links work for 7 days.)`;
+  const emailStatus = await trySendEmail(renter?.email, 'Your Documents', message);
+  showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number, message, null, 'Your Documents', emailStatus);
+}
+
 async function sendForSignature(contractId){
   // Reuse an existing token if one's already been issued (so a re-sent
   // link doesn't invalidate one the renter may already have open).
@@ -1480,7 +1511,7 @@ function showNotifyPanel(renterName, email, contact, message, panelId, subject, 
   panelId = panelId || 'notifyPanel';
   subject = subject || 'Your lease contract';
   const viberDigits = viberNumber(contact);
-  const viberHref = viberDigits ? `viber://chat?number=${viberDigits}` : null;
+  const viberHref = viberDigits ? `viber://chat?number=${viberDigits}&text=${encodeURIComponent(message)}` : null;
   const smsHrefVal = contact ? smsHref(contact, message) : null;
   const emailHref = email ? `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}` : null;
 
@@ -1920,6 +1951,7 @@ async function loadContractsTable(){
         ${c.signed_file_path ? `<button class="btn secondary small" onclick="viewContractFile('${c.signed_file_path}')">📄 File</button>` : ''}
         ${c.advance_proof_path ? `<button class="btn secondary small" onclick="viewStoredFile('${c.advance_proof_path}','Advance proof')">💵 Advance</button>` : ''}
         ${c.deposit_proof_path ? `<button class="btn secondary small" onclick="viewStoredFile('${c.deposit_proof_path}','Deposit proof')">🔒 Deposit</button>` : ''}
+        ${(c.signed_file_path || c.advance_proof_path || c.deposit_proof_path) ? `<button class="btn secondary small" onclick="sendContractFiles('${c.id}')">📤 Send files</button>` : ''}
         ${c.signed_at
           ? `<button class="btn small" style="background:var(--good);" onclick="viewSignature('${c.id}')">✅ Signed</button>`
           : `<button class="btn secondary small" onclick="sendForSignature('${c.id}')">✍️ Send for signature</button>`}
