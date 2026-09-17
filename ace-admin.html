@@ -398,6 +398,10 @@
 // =====================================================================
 const SUPABASE_URL = "https://izpaskyqsozpgfgnmlqu.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_7rT5LFITgGrwZwCgy_2VMQ_nUJrxmmU";
+// The real public address this app lives at — used to build links (like
+// the e-signature link) that must work for someone else, not just
+// whoever currently has this file open. Update this if the site ever moves.
+const SITE_BASE_URL = "https://emsunnyjr-art.github.io/as-properties/";
 // =====================================================================
 
 let sb;
@@ -1472,7 +1476,7 @@ async function sendForSignature(contractId){
   const unitNames = (cus||[]).map(x=>x.units?.unit_name).filter(Boolean).join(', ');
   const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', existing.renter_id).single();
 
-  const signLink = `${window.location.origin}${window.location.pathname.replace(/ace-admin\.html$/, '')}sign-contract.html?token=${token}`;
+  const signLink = `${SITE_BASE_URL}sign-contract.html?token=${token}`;
   const message = `Hi ${renter?.name||''}, please review and sign your lease contract for ${unitNames} here: ${signLink}`;
   const emailStatus = await trySendEmail(renter?.email, 'Please sign your lease contract', message);
   showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number, message, null, 'Please sign your lease contract', emailStatus);
