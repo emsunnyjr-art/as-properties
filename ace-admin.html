@@ -71,6 +71,10 @@
     <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter') submitLogin()">
     <button class="btn" style="width:100%;" onclick="submitLogin()">Log In</button>
     <p class="muted" id="loginError" style="text-align:center;color:var(--bad);"></p>
+    <p class="muted" id="loginForgotMsg" style="text-align:center;"></p>
+    <p class="muted" style="text-align:center;margin-top:10px;">
+      <a href="#" onclick="submitForgotPassword();return false;">Forgot password?</a>
+    </p>
     <p class="muted" style="text-align:center;margin-top:10px;">No account? Ask the property owner to create one for you in Supabase.</p>
   </div>
 </div>
@@ -336,7 +340,7 @@
           <button class="btn secondary small" onclick="clearUnitFilter()">Clear filter</button>
         </div>
       </div>
-      <p class="muted">Every past renter of a unit stays on file here for record — closing out a contract never deletes it, just marks it cancelled/expired.</p>
+      <p class="muted">Shows the current contract per unit only. Past renters stay on file — tap "🕘 History" on a unit to see them.</p>
       <table>
         <thead><tr><th>Unit</th><th>Renter</th><th>Rent</th><th>Start</th><th>End</th><th>Status</th><th></th></tr></thead>
         <tbody id="contractsTable"></tbody>
@@ -1533,15 +1537,28 @@ function showNotifyPanel(renterName, email, contact, message, panelId, subject, 
   document.getElementById(panelId).innerHTML = `
     <div class="card" style="border-color:var(--accent);">
       <p class="section-title">Notify ${renterName}?</p>
-      <textarea id="notifyMessage" rows="4">${message}</textarea>
+      <textarea id="${panelId}_msg" rows="4">${message}</textarea>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <button class="btn secondary" type="button" onclick="copyNotifyMessage('${panelId}')">📋 Copy message</button>
         ${viberHref ? `<a class="btn" style="text-decoration:none;display:inline-block;" href="${viberHref}">💜 Open Viber</a>` : `<span class="muted">No contact number on file</span>`}
         ${smsHrefVal ? `<a class="btn secondary" style="text-decoration:none;display:inline-block;" href="${smsHrefVal}">💬 Open SMS</a>` : ''}
         ${emailStatusHtml}
         <button class="btn secondary" onclick="document.getElementById('${panelId}').innerHTML=''">Dismiss</button>
       </div>
-      <p class="muted">Viber/SMS open your own app with the message ready — you still tap send yourself, and there's no way for this app to confirm those actually went through afterward. Email, when available, sends for real automatically — the result is shown above.</p>
+      <p class="muted">"Open Viber" opens the right chat but won't pre-fill the message (confirmed not to work on either Desktop or mobile) — tap "Copy message" first, then paste it in yourself. SMS pre-fills correctly. Email, when available, sends for real automatically — the result is shown above.</p>
     </div>`;
+}
+
+async function copyNotifyMessage(panelId){
+  const textarea = document.getElementById(`${panelId}_msg`);
+  try{
+    await navigator.clipboard.writeText(textarea.value);
+    alert('Message copied — now paste it into Viber (or wherever you\'re sending it).');
+  }catch(e){
+    textarea.select();
+    document.execCommand('copy');
+    alert('Message copied — now paste it into Viber (or wherever you\'re sending it).');
+  }
 }
 
 async function startEditContract(id){
@@ -1902,6 +1919,41 @@ function clearUnitFilter(){
   loadContractsTable();
 }
 
+function contractRowHtml(c, unitNames, opts){
+  opts = opts || {};
+  return `
+    <tr class="${opts.rowClass||''}" ${opts.hidden ? 'style="display:none;"' : ''}>
+      <td>${opts.indent ? '<span class="muted">↳ </span>' : ''}${(unitNames||[]).filter(Boolean).join(', ') || '—'}</td>
+      <td>${c.renters?.name||'—'}</td>
+      <td>${fmtMoney(c.rent_amount)}</td>
+      <td>${fmtDate(c.start_date)}</td>
+      <td>${fmtDate(c.end_date)}</td>
+      <td><span class="badge b-${c.status}">${c.status}</span></td>
+      <td>
+        ${opts.historyBtn||''}
+        <button class="btn secondary small" onclick="startEditContract('${c.id}')">Edit</button>
+        <button class="btn secondary small" onclick="printContract('${c.id}')">Preview</button>
+        ${c.signed_file_path ? `<button class="btn secondary small" onclick="viewContractFile('${c.signed_file_path}')">📄 File</button>` : ''}
+        ${c.advance_proof_path ? `<button class="btn secondary small" onclick="viewStoredFile('${c.advance_proof_path}','Advance proof')">💵 Advance</button>` : ''}
+        ${c.deposit_proof_path ? `<button class="btn secondary small" onclick="viewStoredFile('${c.deposit_proof_path}','Deposit proof')">🔒 Deposit</button>` : ''}
+        ${(c.signed_file_path || c.advance_proof_path || c.deposit_proof_path) ? `<button class="btn secondary small" onclick="sendContractFiles('${c.id}')">📤 Send files</button>` : ''}
+        ${c.signed_at
+          ? `<button class="btn small" style="background:var(--good);" onclick="viewSignature('${c.id}')">✅ Signed</button>`
+          : `<button class="btn secondary small" onclick="sendForSignature('${c.id}')">✍️ Send for signature</button>`}
+        ${c.status==='active' ? `<button class="btn danger small" onclick="cancelContract('${c.id}')">Cancel</button>` : ''}
+      </td>
+    </tr>`;
+}
+
+function toggleContractHistory(i){
+  const rows = document.querySelectorAll(`.hist-row-${i}`);
+  const btn = document.getElementById(`histBtn-${i}`);
+  if(!rows.length) return;
+  const showing = rows[0].style.display !== 'none';
+  rows.forEach(r=>{ r.style.display = showing ? 'none' : 'table-row'; });
+  if(btn) btn.textContent = showing ? btn.dataset.showLabel : '🔼 Hide history';
+}
+
 async function loadContractsTable(){
   let unitIdsToMatch = null;
   if(currentUnitFilter){
@@ -1931,38 +1983,55 @@ async function loadContractsTable(){
   if(contractIdFilter) q = q.in('id', contractIdFilter);
   const { data } = await q;
 
-  // Fetch all covered units for every contract in one go, for display
+  // Fetch all covered units for every contract in one go, for display + grouping
   const contractIds = (data||[]).map(c=>c.id);
   const { data: cuAll } = contractIds.length
-    ? await sb.from('contract_units').select('contract_id, units(unit_name)').in('contract_id', contractIds)
+    ? await sb.from('contract_units').select('contract_id, units(id, unit_name)').in('contract_id', contractIds)
     : { data: [] };
   const unitNamesByContract = {};
+  const unitIdsByContract = {};
   (cuAll||[]).forEach(r=>{
     (unitNamesByContract[r.contract_id] ||= []).push(r.units?.unit_name);
+    (unitIdsByContract[r.contract_id] ||= []).push(r.units?.id);
   });
 
-  document.getElementById('contractsTable').innerHTML = (data||[]).map(c=>`
-    <tr>
-      <td>${(unitNamesByContract[c.id]||[]).filter(Boolean).join(', ') || '—'}</td>
-      <td>${c.renters?.name||'—'}</td>
-      <td>${fmtMoney(c.rent_amount)}</td>
-      <td>${fmtDate(c.start_date)}</td>
-      <td>${fmtDate(c.end_date)}</td>
-      <td><span class="badge b-${c.status}">${c.status}</span></td>
-      <td>
-        <button class="btn secondary small" onclick="startEditContract('${c.id}')">Edit</button>
-        <button class="btn secondary small" onclick="printContract('${c.id}')">Preview</button>
-        ${c.signed_file_path ? `<button class="btn secondary small" onclick="viewContractFile('${c.signed_file_path}')">📄 File</button>` : ''}
-        ${c.advance_proof_path ? `<button class="btn secondary small" onclick="viewStoredFile('${c.advance_proof_path}','Advance proof')">💵 Advance</button>` : ''}
-        ${c.deposit_proof_path ? `<button class="btn secondary small" onclick="viewStoredFile('${c.deposit_proof_path}','Deposit proof')">🔒 Deposit</button>` : ''}
-        ${(c.signed_file_path || c.advance_proof_path || c.deposit_proof_path) ? `<button class="btn secondary small" onclick="sendContractFiles('${c.id}')">📤 Send files</button>` : ''}
-        ${c.signed_at
-          ? `<button class="btn small" style="background:var(--good);" onclick="viewSignature('${c.id}')">✅ Signed</button>`
-          : `<button class="btn secondary small" onclick="sendForSignature('${c.id}')">✍️ Send for signature</button>`}
-        ${c.status==='active' ? `<button class="btn danger small" onclick="cancelContract('${c.id}')">Cancel</button>` : ''}
-      </td>
-    </tr>
-  `).join('');
+  // Group contracts by the exact set of unit(s) they cover, so a unit's past
+  // renters collapse under one "current" row instead of cluttering the list —
+  // the full history is still on file, just tucked behind a History button.
+  const groups = new Map(); // key -> { unitNames, contracts:[] }
+  (data||[]).forEach(c=>{
+    const ids = (unitIdsByContract[c.id]||[]).filter(Boolean).slice().sort();
+    const key = ids.join(',') || c.id; // fallback: contract with no linked units keeps its own row
+    if(!groups.has(key)) groups.set(key, { unitNames: unitNamesByContract[c.id]||[], contracts: [] });
+    groups.get(key).contracts.push(c);
+  });
+
+  // Sort groups by unit name for a stable, scannable list
+  const groupList = [...groups.values()].sort((a,b)=>
+    (a.unitNames.join(', ')||'').localeCompare(b.unitNames.join(', ')||''));
+
+  let html = '';
+  groupList.forEach((g, i)=>{
+    // contracts already ordered by start_date desc from the query;
+    // prefer an active one as "current" if one exists, else the most recent
+    const contracts = g.contracts.slice();
+    const activeIdx = contracts.findIndex(c=>c.status==='active');
+    const current = activeIdx >= 0 ? contracts.splice(activeIdx,1)[0] : contracts.shift();
+    const history = contracts; // whatever's left, most recent first
+
+    const historyLabel = `🕘 History (${history.length})`;
+    const historyBtn = history.length
+      ? `<button class="btn secondary small" id="histBtn-${i}" data-show-label="${historyLabel}" onclick="toggleContractHistory(${i})">${historyLabel}</button>`
+      : '';
+
+    html += contractRowHtml(current, unitNamesByContract[current.id]||g.unitNames, { historyBtn });
+    history.forEach(c=>{
+      html += contractRowHtml(c, unitNamesByContract[c.id]||g.unitNames, { rowClass:`hist-row-${i}`, hidden:true, indent:true });
+    });
+  });
+
+  document.getElementById('contractsTable').innerHTML = html ||
+    '<tr><td colspan="7" class="muted">No contracts yet.</td></tr>';
 }
 
 async function cancelContract(id){
@@ -2420,6 +2489,28 @@ async function submitLogin(){
   document.getElementById('lockScreen').style.display = 'none';
   document.getElementById('loginError').textContent = '';
   loadAll();
+}
+
+async function submitForgotPassword(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const msgEl = document.getElementById('loginForgotMsg');
+  if(!email){
+    document.getElementById('loginError').textContent = 'Type your email above first, then click "Forgot password?".';
+    return;
+  }
+  document.getElementById('loginError').textContent = '';
+  msgEl.style.color = 'var(--muted)';
+  msgEl.textContent = 'Sending reset link…';
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo: `${SITE_BASE_URL}reset-password.html`
+  });
+  if(error){
+    msgEl.style.color = 'var(--bad)';
+    msgEl.textContent = error.message;
+    return;
+  }
+  msgEl.style.color = 'var(--good)';
+  msgEl.textContent = '✅ Reset link sent — check your email.';
 }
 
 // ---------- init ----------
