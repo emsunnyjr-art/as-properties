@@ -892,12 +892,17 @@ async function ackReminder(id){
 // This flips rent_payments.status to 'paid', which a DB trigger uses to
 // auto-clear this reminder — no separate "hide" step needed.
 async function markReminderPaid(rentPaymentId){
-  const { data: rp } = await sb.from('rent_payments').select('amount_due').eq('id', rentPaymentId).single();
-  if(!rp) return;
-  await sb.from('rent_payments').update({
+  const { data: rp, error: selErr } = await sb.from('rent_payments').select('amount_due').eq('id', rentPaymentId).single();
+  if(selErr || !rp){ alert('Could not mark paid: ' + (selErr ? selErr.message : 'payment not found')); return; }
+  const { error: updErr } = await sb.from('rent_payments').update({
     amount_paid: rp.amount_due,
     paid_date: new Date().toISOString().slice(0,10)
   }).eq('id', rentPaymentId);
+  if(updErr){ alert('Could not mark paid: ' + updErr.message); return; }
+  // Clear this payment's reminder(s) directly so the row disappears right away
+  await sb.from('reminders_log')
+    .update({ acknowledged:true, acknowledged_at:new Date().toISOString() })
+    .eq('rent_payment_id', rentPaymentId).eq('acknowledged', false);
   loadDashboard();
 }
 
