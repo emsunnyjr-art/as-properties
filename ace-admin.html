@@ -350,6 +350,7 @@
           <select id="contractsFilterBuilding" style="width:180px;margin:0;" onchange="onContractsFilterBuildingChange()"></select>
           <select id="contractUnitFilter" style="width:200px;margin:0;" onchange="onUnitFilterChange()"></select>
           <button class="btn secondary small" onclick="clearUnitFilter()">Clear filter</button>
+          <button class="btn secondary small" id="toggleActiveBtn" onclick="toggleActiveContracts()">🙈 Hide active contracts</button>
         </div>
       </div>
       <p class="muted">Shows the current contract per unit only. Past renters stay on file — tap "🕘 History" on a unit to see them.</p>
@@ -2054,6 +2055,14 @@ function contractRowHtml(c, unitNames, opts){
     </tr>`;
 }
 
+let hideActiveContracts = false;
+function toggleActiveContracts(){
+  hideActiveContracts = !hideActiveContracts;
+  const btn = document.getElementById('toggleActiveBtn');
+  if(btn) btn.textContent = hideActiveContracts ? '👁 Show active contracts' : '🙈 Hide active contracts';
+  loadContractsTable();
+}
+
 function toggleContractHistory(i){
   const rows = document.querySelectorAll(`.hist-row-${i}`);
   const btn = document.getElementById(`histBtn-${i}`);
@@ -2136,6 +2145,7 @@ async function loadContractsTable(){
     const activeIdx = contracts.findIndex(c=>c.status==='active');
     const current = activeIdx >= 0 ? contracts.splice(activeIdx,1)[0] : contracts.shift();
     const history = contracts; // whatever's left, most recent first
+    if(hideActiveContracts && current.status==='active') return; // user hid active contracts
 
     const historyLabel = `🕘 History (${history.length})`;
     const historyBtn = history.length
@@ -2149,7 +2159,7 @@ async function loadContractsTable(){
   });
 
   document.getElementById('contractsTable').innerHTML = html ||
-    '<tr><td colspan="8" class="muted">No contracts yet.</td></tr>';
+    `<tr><td colspan="8" class="muted">${hideActiveContracts ? 'Active contracts are hidden. Tap "Show active contracts" to see them.' : 'No contracts yet.'}</td></tr>`;
 }
 
 async function cancelContract(id){
