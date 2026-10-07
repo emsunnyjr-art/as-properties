@@ -108,6 +108,18 @@
     <div class="grid" id="statGrid"></div>
 
     <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
+        <p class="section-title" style="margin:0;">Unpaid balances — active contracts</p>
+        <p style="margin:0;font-weight:700;" id="balanceTotalLabel"></p>
+      </div>
+      <p class="muted">Rent already due and not yet paid, per renter, with the first and last unpaid month. A lease that has passed its end date with no newer contract keeps running on the same terms.</p>
+      <table>
+        <thead><tr><th>Renter</th><th>Unit(s)</th><th>Unpaid</th><th>Balance</th><th>From – To</th><th></th></tr></thead>
+        <tbody id="balanceTable"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
       <p class="section-title">Rent collection — last 12 months</p>
       <p class="muted">Click a bar to see exactly who's collected or outstanding for that month.</p>
       <canvas id="monthlyChart" height="90"></canvas>
@@ -342,7 +354,7 @@
       </div>
       <p class="muted">Shows the current contract per unit only. Past renters stay on file — tap "🕘 History" on a unit to see them.</p>
       <table>
-        <thead><tr><th>Unit</th><th>Renter</th><th>Rent</th><th>Start</th><th>End</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Unit</th><th>Renter</th><th>Rent</th><th>Start</th><th>End</th><th>Status</th><th>Unpaid</th><th></th></tr></thead>
         <tbody id="contractsTable"></tbody>
       </table>
     </div>
@@ -650,6 +662,88 @@ function onRentPeriodChange(){
 }
 
 // ---------- DASHBOARD ----------
+// ---------- UNPAID BALANCE SUMMARY ----------
+function fmtMonthYear(d){ return d ? new Date(d+'T00:00:00').toLocaleDateString(undefined,{month:'short', year:'numeric'}) : '—'; }
+
+function periodUnitLabel(rentPeriod, n){
+  const one = Number(n) === 1;
+  if(rentPeriod === 'daily') return one ? 'day' : 'days';
+  if(rentPeriod === 'annual') return one ? 'year' : 'years';
+  return one ? 'month' : 'months';
+}
+
+// "Feb 2026 – Oct 2026" (or a single month/day if first and last are the same)
+function balanceRangeText(b){
+  if(!b || !Number(b.periods_unpaid)) return '';
+  const f = b.rent_period === 'daily' ? fmtDate : fmtMonthYear;
+  const from = f(b.first_unpaid_period), to = f(b.last_unpaid_period);
+  return from === to ? from : `${from} – ${to}`;
+}
+
+function balanceCellHtml(b, isActive){
+  if(b && Number(b.periods_unpaid) > 0){
+    const n = Number(b.periods_unpaid);
+    return `<span style="color:var(--bad);font-weight:700;">${fmtMoney(b.balance)}</span><br><span class="muted">${n} ${periodUnitLabel(b.rent_period, n)} unpaid · ${balanceRangeText(b)}</span>`;
+  }
+  return isActive ? '<span class="badge b-paid">Paid up</span>' : '<span class="muted">—</span>';
+}
+
+function switchToTab(name){
+  document.querySelectorAll('#tabNav button').forEach(b=>b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('main > section').forEach(s=>s.classList.add('hidden'));
+  document.getElementById('tab-'+name).classList.remove('hidden');
+  window.scrollTo({ top:0, behavior:'smooth' });
+}
+
+function openPaymentsForContract(contractId){
+  switchToTab('payments');
+  const sel = document.getElementById('payContractSelect');
+  if(sel){ sel.value = contractId; loadPaymentSchedule(); loadItemizedBill(); }
+}
+
+let balanceContextMap = {};
+async function loadBalanceSummary(){
+  const body = document.getElementById('balanceTable');
+  const totalEl = document.getElementById('balanceTotalLabel');
+  const { data, error } = await sb.from('v_contract_balance').select('*').eq('status','active').order('balance', { ascending:false });
+  if(error){
+    totalEl.textContent = '';
+    body.innerHTML = `<tr><td colspan="6" class="muted">Balance summary isn't available yet — run ace-feature-update-21.sql in Supabase, then refresh. (${error.message})</td></tr>`;
+    return [];
+  }
+  const rows = data || [];
+  const behind = rows.filter(r=>Number(r.balance) > 0);
+  const total = behind.reduce((s,r)=>s+Number(r.balance), 0);
+  totalEl.innerHTML = behind.length
+    ? `<span style="color:var(--bad);">${fmtMoney(total)}</span> <span class="muted">unpaid across ${behind.length} contract${behind.length===1?'':'s'}</span>`
+    : '<span style="color:var(--good);">All active contracts are paid up</span>';
+
+  const payText = await buildPaymentInstructionsText();
+  balanceContextMap = {};
+  body.innerHTML = behind.map(r=>{
+    const n = Number(r.periods_unpaid);
+    const label = periodUnitLabel(r.rent_period, n);
+    const range = balanceRangeText(r);
+    const msg = `Hi ${r.renter_name}, your unpaid rent for ${r.unit_names} is ${fmtMoney(r.balance)} for ${n} ${label} (${range}). Kindly settle at your earliest convenience.${payText}`;
+    balanceContextMap[r.contract_id] = { amount: r.balance, renterName: r.renter_name, unitName: r.unit_names };
+    return `
+      <tr>
+        <td><strong>${r.renter_name}</strong>${r.past_end_date ? `<br><span class="badge b-expiring" title="No newer contract is on file, so the same terms continue">Lease ended ${fmtDate(r.end_date)} · continuing</span>` : ''}</td>
+        <td>${r.unit_names || '—'}</td>
+        <td>${n} ${label}</td>
+        <td style="color:var(--bad);font-weight:700;">${fmtMoney(r.balance)}</td>
+        <td>${range}</td>
+        <td style="white-space:nowrap;">
+          <a class="action" href="${telHref(r.contact_number)}">📞</a>
+          <a class="action" href="${smsHref(r.contact_number, msg)}">💬</a>
+          <button class="btn secondary small" onclick="showPaymentKiosk(balanceContextMap['${r.contract_id}'])">💳 Pay</button>
+          <button class="btn secondary small" onclick="openPaymentsForContract('${r.contract_id}')">Schedule</button>
+        </td>
+      </tr>`;
+  }).join('') || '<tr><td colspan="6" class="muted">Nothing unpaid.</td></tr>';
+  return rows;
+}
+
 async function loadDashboard(){
   const { data: units } = await sb.from('v_unit_status').select('*');
   const occupied = (units||[]).filter(u=>u.occupancy==='occupied').length;
@@ -657,13 +751,14 @@ async function loadDashboard(){
 
   const { data: reminders } = await sb.from('v_open_reminders').select('*').order('target_date');
 
-  const overdueCount = (reminders||[]).filter(r=>r.reminder_type==='rent_overdue').length;
+  const balances = await loadBalanceSummary();
+  const behindCount = balances.filter(b=>Number(b.balance) > 0).length;
   const expiringCount = (reminders||[]).filter(r=>r.reminder_type==='contract_expiring').length;
 
   document.getElementById('statGrid').innerHTML = `
     <div class="stat"><div class="num">${occupied}</div><div class="lbl">Occupied units</div></div>
     <div class="stat"><div class="num">${vacant}</div><div class="lbl">Vacant units</div></div>
-    <div class="stat"><div class="num" style="color:var(--bad)">${overdueCount}</div><div class="lbl">Overdue rent</div></div>
+    <div class="stat"><div class="num" style="color:var(--bad)">${behindCount}</div><div class="lbl">Renters with unpaid rent</div></div>
     <div class="stat"><div class="num" style="color:var(--warn)">${expiringCount}</div><div class="lbl">Contracts expiring</div></div>
   `;
 
@@ -1352,6 +1447,12 @@ async function showRenterDetail(renterId){
   if(!r) return;
   const { data: units } = await sb.from('v_renter_units').select('*').eq('renter_id', renterId);
   const { data: rev } = await sb.from('v_renter_revenue').select('*').eq('renter_id', renterId).maybeSingle();
+  const { data: bals } = await sb.from('v_contract_balance')
+    .select('contract_id, rent_period, periods_unpaid, balance, first_unpaid_period, last_unpaid_period, past_end_date')
+    .eq('renter_id', renterId);
+  const balByContract = {};
+  (bals||[]).forEach(b=>{ balByContract[b.contract_id] = b; });
+  const totalOwed = (bals||[]).reduce((s,b)=>s+Number(b.balance||0), 0);
 
   // Group by contract — a combined lease (several units, one contract)
   // should read as one line, not N duplicate-looking rows.
@@ -1378,11 +1479,12 @@ async function showRenterDetail(renterId){
         <div class="stat"><div class="num" style="font-size:18px;">${activeContracts.reduce((n,c)=>n+c.unit_names.length,0)}</div><div class="lbl">Units currently held</div></div>
         <div class="stat"><div class="num" style="font-size:18px;">${contractRows.length}</div><div class="lbl">Total contracts on file</div></div>
         <div class="stat"><div class="num" style="font-size:18px;color:var(--good);">${fmtMoney(rev?.total_revenue||0)}</div><div class="lbl">Total paid, all time</div></div>
+        <div class="stat"><div class="num" style="font-size:18px;color:${totalOwed>0?'var(--bad)':'var(--good)'};">${fmtMoney(totalOwed)}</div><div class="lbl">Unpaid balance</div></div>
       </div>
 
       <p class="section-title">Units (current &amp; past)</p>
       <table>
-        <thead><tr><th>Unit(s)</th><th>Rent</th><th>Advance</th><th>Deposit</th><th>Start</th><th>End</th><th>Status</th></tr></thead>
+        <thead><tr><th>Unit(s)</th><th>Rent</th><th>Advance</th><th>Deposit</th><th>Start</th><th>End</th><th>Status</th><th>Unpaid</th></tr></thead>
         <tbody>
           ${contractRows.map(u=>`
             <tr>
@@ -1392,9 +1494,10 @@ async function showRenterDetail(renterId){
               <td>${fmtMoney(u.deposit)}</td>
               <td>${fmtDate(u.start_date)}</td>
               <td>${fmtDate(u.end_date)}</td>
-              <td><span class="badge b-${u.status}">${u.status}</span></td>
+              <td><span class="badge b-${u.status}">${u.status}</span>${balByContract[u.contract_id]?.past_end_date ? '<br><span class="badge b-expiring" title="No newer contract is on file, so the same terms continue">past end · continuing</span>' : ''}</td>
+              <td>${balanceCellHtml(balByContract[u.contract_id], u.status==='active')}</td>
             </tr>
-          `).join('') || '<tr><td colspan="7" class="muted">No contracts on file.</td></tr>'}
+          `).join('') || '<tr><td colspan="8" class="muted">No contracts on file.</td></tr>'}
         </tbody>
       </table>
     </div>`;
@@ -1933,7 +2036,8 @@ function contractRowHtml(c, unitNames, opts){
       <td>${fmtMoney(c.rent_amount)}</td>
       <td>${fmtDate(c.start_date)}</td>
       <td>${fmtDate(c.end_date)}</td>
-      <td><span class="badge b-${c.status}">${c.status}</span></td>
+      <td><span class="badge b-${c.status}">${c.status}</span>${opts.balance?.past_end_date ? '<br><span class="badge b-expiring" title="No newer contract is on file, so the same terms continue">past end · continuing</span>' : ''}</td>
+      <td>${balanceCellHtml(opts.balance, c.status==='active')}</td>
       <td>
         ${opts.historyBtn||''}
         <button class="btn secondary small" onclick="startEditContract('${c.id}')">Edit</button>
@@ -1973,13 +2077,13 @@ async function loadContractsTable(){
   let contractIdFilter = null;
   if(unitIdsToMatch){
     if(unitIdsToMatch.length === 0){
-      document.getElementById('contractsTable').innerHTML = '<tr><td colspan="7" class="muted">No units in this filter.</td></tr>';
+      document.getElementById('contractsTable').innerHTML = '<tr><td colspan="8" class="muted">No units in this filter.</td></tr>';
       return;
     }
     const { data: cuRows } = await sb.from('contract_units').select('contract_id').in('unit_id', unitIdsToMatch);
     contractIdFilter = [...new Set((cuRows||[]).map(r=>r.contract_id))];
     if(contractIdFilter.length === 0){
-      document.getElementById('contractsTable').innerHTML = '<tr><td colspan="7" class="muted">No contracts for this filter.</td></tr>';
+      document.getElementById('contractsTable').innerHTML = '<tr><td colspan="8" class="muted">No contracts for this filter.</td></tr>';
       return;
     }
   }
@@ -1999,6 +2103,15 @@ async function loadContractsTable(){
     (unitNamesByContract[r.contract_id] ||= []).push(r.units?.unit_name);
     (unitIdsByContract[r.contract_id] ||= []).push(r.units?.id);
   });
+
+  // Unpaid balance per contract (months unpaid, total, first–last month)
+  const { data: balRows } = contractIds.length
+    ? await sb.from('v_contract_balance')
+        .select('contract_id, rent_period, periods_unpaid, balance, first_unpaid_period, last_unpaid_period, past_end_date')
+        .in('contract_id', contractIds)
+    : { data: [] };
+  const balanceByContract = {};
+  (balRows||[]).forEach(b=>{ balanceByContract[b.contract_id] = b; });
 
   // Group contracts by the exact set of unit(s) they cover, so a unit's past
   // renters collapse under one "current" row instead of cluttering the list —
@@ -2029,14 +2142,14 @@ async function loadContractsTable(){
       ? `<button class="btn secondary small" id="histBtn-${i}" data-show-label="${historyLabel}" onclick="toggleContractHistory(${i})">${historyLabel}</button>`
       : '';
 
-    html += contractRowHtml(current, unitNamesByContract[current.id]||g.unitNames, { historyBtn });
+    html += contractRowHtml(current, unitNamesByContract[current.id]||g.unitNames, { historyBtn, balance: balanceByContract[current.id] });
     history.forEach(c=>{
-      html += contractRowHtml(c, unitNamesByContract[c.id]||g.unitNames, { rowClass:`hist-row-${i}`, hidden:true, indent:true });
+      html += contractRowHtml(c, unitNamesByContract[c.id]||g.unitNames, { rowClass:`hist-row-${i}`, hidden:true, indent:true, balance: balanceByContract[c.id] });
     });
   });
 
   document.getElementById('contractsTable').innerHTML = html ||
-    '<tr><td colspan="7" class="muted">No contracts yet.</td></tr>';
+    '<tr><td colspan="8" class="muted">No contracts yet.</td></tr>';
 }
 
 async function cancelContract(id){
