@@ -179,8 +179,8 @@
     <div class="card">
       <p class="section-title" id="bldFormTitle">Add building</p>
       <div class="row">
-        <div><label>Location</label><select id="bldLocation"></select></div>
-        <div><label>Name</label><input id="bldName"></div>
+        <div><label>Location</label><select id="bldLocation" onchange="bldLocationTouched=true;document.getElementById('bldLocationHint').textContent=''"></select><p class="muted" id="bldLocationHint" style="margin:2px 0 0 0;"></p></div>
+        <div><label>Name</label><input id="bldName" oninput="suggestBuildingLocation()"></div>
         <div><label>Description</label><input id="bldDesc"></div>
       </div>
       <div><label>Floor plan / layout drawing (optional)</label>
@@ -256,8 +256,8 @@
           <select id="rentersFilterLocation" style="width:180px;margin:0;" onchange="onRentersFilterLocationChange()"></select>
           <select id="rentersFilterBuilding" style="width:200px;margin:0;" onchange="loadRenters()"></select>
           <select id="rentersFilterScope" style="width:170px;margin:0;" onchange="loadRenters()">
-            <option value="active">Current renters</option>
-            <option value="any">Current + past</option>
+            <option value="all">All renters</option>
+            <option value="active">Current renters only</option>
             <option value="none">No contract yet</option>
           </select>
         </div>
@@ -715,7 +715,17 @@ function getSelectedUnitIds(){
 }
 
 function onLocationChange(){ populateBuildingDropdown(); populateUnitDropdown(); }
-function onBuildingChange(){ populateUnitDropdown(); }
+function onBuildingChange(){
+  // Picking a building with no location chosen → fill in that building's location
+  const bldId = document.getElementById('cBuilding').value;
+  const b = allBuildings.find(x=>x.id===bldId);
+  if(b && b.location_id && !document.getElementById('cLocation').value){
+    document.getElementById('cLocation').value = b.location_id;
+    populateBuildingDropdown();
+    document.getElementById('cBuilding').value = bldId;
+  }
+  populateUnitDropdown();
+}
 function onUnitChange(){
   // Sum the asking price of every ticked unit as a helpful starting figure
   // for the combined rent — fully editable, since a negotiated combined
@@ -1339,6 +1349,47 @@ function cancelEditLocation(){
 }
 
 // --- Building (add or edit) ---
+// ---------- Auto-suggest a location from the building name ----------
+let bldLocationTouched = false;
+const NAME_STOPWORDS = new Set(['the','and','of','for','to','at','in','a','s','as','commercial','space','spaces','rental','rentals','stall','stalls','phase','unit','units','building','bldg','store','shop','house','lot','block','blk','area','property','properties','rent','lease']);
+function nameTokens(t){
+  return String(t||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/)
+    .filter(w=>w.length>=3 && !/^\d+$/.test(w) && !NAME_STOPWORDS.has(w));
+}
+// Score every saved location by how many meaningful words the building name
+// shares with the location itself (heavily) or with buildings already in it.
+function bestLocationFor(buildingName){
+  const words = nameTokens(buildingName);
+  if(!words.length) return null;
+  let best = null;
+  allLocations.forEach(l=>{
+    const locWords = new Set(nameTokens(l.name));
+    const sibWords = new Set();
+    allBuildings.filter(b=>b.location_id===l.id).forEach(b=>nameTokens(b.name).forEach(w=>sibWords.add(w)));
+    let score = 0;
+    words.forEach(w=>{
+      const hit = (set)=> set.has(w) || [...set].some(x=>x.length>=4 && w.length>=4 && (x.startsWith(w) || w.startsWith(x)));
+      if(hit(locWords)) score += 3;
+      else if(hit(sibWords)) score += 1;
+    });
+    if(score > 0 && (!best || score > best.score)) best = { loc: l, score };
+  });
+  return best;
+}
+function suggestBuildingLocation(){
+  if(editingBuildingId || bldLocationTouched) return;
+  const name = document.getElementById('bldName').value;
+  const hint = document.getElementById('bldLocationHint');
+  if(name.trim().length < 3){ hint.textContent = ''; return; }
+  const best = bestLocationFor(name);
+  if(best){
+    document.getElementById('bldLocation').value = best.loc.id;
+    hint.textContent = `Suggested from the name: ${best.loc.name} — change it if that's wrong.`;
+  } else {
+    hint.textContent = '';
+  }
+}
+
 async function saveBuilding(){
   const location_id = document.getElementById('bldLocation').value;
   const name = document.getElementById('bldName').value.trim();
@@ -1361,6 +1412,7 @@ async function startEditBuilding(id){
   const { data: b } = await sb.from('buildings').select('*').eq('id', id).single();
   if(!b) return;
   editingBuildingId = id;
+  document.getElementById('bldLocationHint').textContent = '';
   document.getElementById('bldLocation').value = b.location_id || '';
   document.getElementById('bldName').value = b.name;
   document.getElementById('bldDesc').value = b.description || '';
@@ -1377,6 +1429,8 @@ function cancelEditBuilding(){
   document.getElementById('bldName').value=''; document.getElementById('bldDesc').value='';
   document.getElementById('bldFloorPlan').value = '';
   document.getElementById('bldFloorPlanCurrent').textContent = '';
+  bldLocationTouched = false;
+  document.getElementById('bldLocationHint').textContent = '';
   document.getElementById('bldFormTitle').textContent = 'Add building';
   document.getElementById('bldSubmitBtn').textContent = 'Add Building';
   document.getElementById('cancelBldEditBtn').classList.add('hidden');
@@ -1811,15 +1865,15 @@ async function loadRenters(){
   const rows = (data||[]).filter(r=>{
     if(q && !`${r.name} ${r.business_name||''}`.toLowerCase().includes(q)) return false;
     if(scope==='none') return !any[r.id];
-    const src = scope==='any' ? any[r.id] : active[r.id];
-    if(!src) return scope==='any' && !filtering; // "Current + past" without a filter lists everyone
+    const src = scope==='all' ? any[r.id] : active[r.id];
+    if(!src) return scope==='all' && !filtering; // "All renters" without a building filter lists everyone
     return !filtering || Object.keys(src).some(bldOk);
   });
 
   document.getElementById('rentersCountLabel').textContent = `(${rows.length})`;
   const where = r => {
-    const src = scope==='any' ? any[r.id] : active[r.id];
-    if(!src) return '<span class="muted">—</span>';
+    const src = scope==='active' ? active[r.id] : (active[r.id] || any[r.id]);
+    if(!src) return '<span class="muted">no contract yet</span>';
     return Object.entries(src).filter(([b])=>!filtering || bldOk(b))
       .map(([b, names])=>`${(bldById[b]?.name||'').replace(/</g,'&lt;')} · ${[...names].join(', ')}`).join('<br>') || '—';
   };
