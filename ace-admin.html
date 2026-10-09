@@ -308,13 +308,32 @@
             <option value="annual">Annual (lump sum)</option>
           </select>
         </div>
-        <div><label id="cRentLabel">Monthly rent</label><input id="cRent" type="number" step="0.01"></div>
+        <div><label id="cRentLabel">Monthly rent</label><input id="cRent" type="number" step="0.01" oninput="onEscalationChange()"></div>
         <div><label>Advance</label><input id="cAdvance" type="number" step="0.01" value="0"></div>
         <div><label>Deposit</label><input id="cDeposit" type="number" step="0.01" value="0"></div>
-        <div><label>Start date</label><input id="cStart" type="date"></div>
-        <div><label id="cTermLabel">Term (months)</label><input id="cTerm" type="number" value="12"></div>
+        <div><label>Start date</label><input id="cStart" type="date" onchange="onEscalationChange()"></div>
+        <div><label id="cTermLabel">Term (months)</label><input id="cTerm" type="number" value="12" oninput="onEscalationChange()"></div>
         <div id="cDueDayField"><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="28"></div>
       </div>
+
+      <div class="row" style="margin-top:8px;">
+        <div>
+          <label>Rent escalation</label>
+          <select id="cEscType" onchange="onEscalationChange()">
+            <option value="none">None (rent stays the same)</option>
+            <option value="percent">Percent (%) increase</option>
+            <option value="amount">Fixed amount (₱) increase</option>
+          </select>
+        </div>
+        <div id="cEscValueField" class="hidden"><label id="cEscValueLabel">Increase</label><input id="cEscValue" type="number" step="0.01" min="0" value="0" oninput="onEscalationChange()"></div>
+        <div id="cEscEveryField" class="hidden"><label>Every</label>
+          <div style="display:flex;gap:6px;">
+            <input id="cEscEvery" type="number" min="1" value="2" style="width:80px;" oninput="onEscalationChange()">
+            <select id="cEscUnit" onchange="onEscalationChange()"><option value="years">year(s)</option><option value="months">month(s)</option></select>
+          </div>
+        </div>
+      </div>
+      <div id="cEscPreview" class="muted" style="margin:4px 0 10px 0;"></div>
 
       <div><label>Notes</label><textarea id="cNotes" rows="2"></textarea></div>
       <div><label>Terms &amp; Conditions</label>
@@ -648,6 +667,133 @@ function onRenterModeChange(){
   document.getElementById('newRenterBlock').classList.toggle('hidden', mode==='existing');
 }
 
+// ---------- RENT ESCALATION ----------
+function addMonthsISO(iso, m){
+  const [y,mo,d] = iso.split('-').map(Number);
+  const t = new Date(Date.UTC(y, mo-1+m, 1));
+  const dim = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth()+1, 0)).getUTCDate();
+  t.setUTCDate(Math.min(d, dim));
+  return t.toISOString().slice(0,10);
+}
+function escalationActive(c){
+  return !!c && (c.escalation_type==='percent' || c.escalation_type==='amount')
+    && Number(c.escalation_value)>0 && Number(c.escalation_every_months)>0;
+}
+// Mirrors escalated_rent() in the database: monthly leases step up in the
+// month containing the anniversary, daily/annual on the anniversary itself.
+function escalationSteps(c, throughISO){
+  const steps = [];
+  if(!escalationActive(c) || !c.start_date) return steps;
+  const monthly = (c.rent_period||'monthly') === 'monthly';
+  const every = Number(c.escalation_every_months), v = Number(c.escalation_value);
+  let amt = Number(c.rent_amount)||0;
+  for(let n=1; n<=200; n++){
+    let eff = addMonthsISO(c.start_date, n*every);
+    if(monthly) eff = eff.slice(0,7) + '-01';
+    if(eff > throughISO) break;
+    amt = c.escalation_type==='percent' ? Math.round(amt*(1+v/100)*100)/100 : amt + v;
+    steps.push({ date: eff, rent: amt });
+  }
+  return steps;
+}
+function escalationEveryText(m){
+  m = Number(m);
+  if(m % 12 === 0){ const y = m/12; return `${y} year${y===1?'':'s'}`; }
+  return `${m} month${m===1?'':'s'}`;
+}
+function escalationLabel(c){
+  if(!escalationActive(c)) return '';
+  const inc = c.escalation_type==='percent' ? `${Number(c.escalation_value)}%` : fmtMoney(c.escalation_value);
+  return `+${inc} every ${escalationEveryText(c.escalation_every_months)}`;
+}
+function escalationDateText(c, iso){
+  return (c.rent_period||'monthly')==='monthly' ? fmtMonthYear(iso) : fmtDate(iso);
+}
+function todayISO(){ return new Date().toISOString().slice(0,10); }
+// Rent in effect today (for the Contracts table)
+function currentEscalatedRent(c){
+  const st = escalationSteps(c, todayISO());
+  return st.length ? st[st.length-1].rent : Number(c.rent_amount);
+}
+function termEndISO(period, start, term){
+  if(!start) return null;
+  if(period==='daily') return addMonthsISO(start,0) && new Date(new Date(start+'T00:00:00Z').getTime() + (term-1)*86400000).toISOString().slice(0,10);
+  const months = period==='annual' ? term*12 : term;
+  const d = new Date(addMonthsISO(start, months)+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()-1);
+  return d.toISOString().slice(0,10);
+}
+function readEscalationFromForm(){
+  const type = document.getElementById('cEscType').value;
+  const val = parseFloat(document.getElementById('cEscValue').value) || 0;
+  const n = parseInt(document.getElementById('cEscEvery').value) || 0;
+  const unit = document.getElementById('cEscUnit').value;
+  const active = type!=='none' && val>0 && n>0;
+  return {
+    escalation_type: active ? type : 'none',
+    escalation_value: active ? val : 0,
+    escalation_every_months: active ? (unit==='years' ? n*12 : n) : null
+  };
+}
+function onEscalationChange(){
+  const type = document.getElementById('cEscType').value;
+  const on = type !== 'none';
+  document.getElementById('cEscValueField').classList.toggle('hidden', !on);
+  document.getElementById('cEscEveryField').classList.toggle('hidden', !on);
+  document.getElementById('cEscValueLabel').textContent = type==='percent' ? 'Increase (%)' : 'Increase (₱ per period)';
+  const box = document.getElementById('cEscPreview');
+  if(!on){ box.innerHTML = ''; return; }
+  const period = document.getElementById('cRentPeriod').value;
+  const start = document.getElementById('cStart').value;
+  const rent = parseFloat(document.getElementById('cRent').value) || 0;
+  const esc = readEscalationFromForm();
+  if(esc.escalation_type==='none'){ box.textContent = 'Enter the increase and how often it applies.'; return; }
+  if(!start || !rent){ box.textContent = 'Fill in the rent and start date to preview the increase dates.'; return; }
+  const term = parseInt(document.getElementById('cTerm').value) || 1;
+  const c = Object.assign({ rent_period: period, start_date: start, rent_amount: rent }, esc);
+  const end = termEndISO(period, start, term);
+  const steps = escalationSteps(c, end);
+  const per = period==='daily' ? 'day' : period==='annual' ? 'year' : 'month';
+  let html = `<strong>${escalationLabel(c)}</strong>, counted from the start date (${fmtDate(start)}), applied on top of the previous rent.<br>`;
+  html += `Starts at ${fmtMoney(rent)}/${per}`;
+  if(steps.length){
+    html += steps.map(x=>` → <strong>${fmtMoney(x.rent)}</strong> from ${escalationDateText(c,x.date)}`).join('');
+  } else {
+    const first = escalationSteps(c, addMonthsISO(start, 1200))[0];
+    html += ` — no increase falls inside this term${first ? ` (the first would be ${escalationDateText(c,first.date)})` : ''}`;
+  }
+  html += '. If the lease runs on past its end date without a new contract, the same schedule keeps applying.';
+  box.innerHTML = html;
+}
+function loadEscalationIntoForm(c){
+  const type = c.escalation_type || 'none';
+  document.getElementById('cEscType').value = type;
+  document.getElementById('cEscValue').value = Number(c.escalation_value)||0;
+  const m = Number(c.escalation_every_months)||24;
+  if(m % 12 === 0){ document.getElementById('cEscEvery').value = m/12; document.getElementById('cEscUnit').value = 'years'; }
+  else { document.getElementById('cEscEvery').value = m; document.getElementById('cEscUnit').value = 'months'; }
+  onEscalationChange();
+}
+function resetEscalationForm(){
+  document.getElementById('cEscType').value = 'none';
+  document.getElementById('cEscValue').value = 0;
+  document.getElementById('cEscEvery').value = 2;
+  document.getElementById('cEscUnit').value = 'years';
+  onEscalationChange();
+}
+function escalationClauseHtml(c){
+  if(!escalationActive(c)) return '';
+  const period = c.rent_period||'monthly';
+  const per = period==='daily' ? 'daily' : period==='annual' ? 'annual' : 'monthly';
+  const inc = c.escalation_type==='percent' ? `${Number(c.escalation_value)}%` : `${numberToWords(c.escalation_value)} Pesos (${fmtMoney(c.escalation_value)})`;
+  const steps = escalationSteps(c, c.end_date || addMonthsISO(c.start_date, 1200));
+  let t = `The ${per} rent shall be increased by ${inc} every ${escalationEveryText(c.escalation_every_months)}, counted from the commencement date of this Agreement, each increase being applied on the rent then in effect.`;
+  if(steps.length){
+    t += ' Accordingly: ' + steps.map(x=>`${fmtMoney(x.rent)} effective ${escalationDateText(c,x.date)}`).join('; ') + '.';
+  }
+  t += ' Should the Lessee continue to occupy the premises after the term without a new written contract, the same rent and escalation shall continue to apply.';
+  return t;
+}
+
 function onRentPeriodChange(){
   const period = document.getElementById('cRentPeriod').value;
   const labels = {
@@ -660,6 +806,7 @@ function onRentPeriodChange(){
   document.getElementById('cTerm').value = labels.defaultTerm;
   // Due-day-of-month only makes sense for monthly billing
   document.getElementById('cDueDayField').classList.toggle('hidden', period !== 'monthly');
+  if(document.getElementById('cEscPreview')) onEscalationChange();
 }
 
 // ---------- DASHBOARD ----------
@@ -1717,6 +1864,7 @@ async function startEditContract(id){
     c.rent_period === 'annual' ? (c.term_years||1) :
     (c.term_months||12);
   document.getElementById('cDueDay').value = c.rent_due_day || 1;
+  loadEscalationIntoForm(c);
   document.getElementById('cNotes').value = c.notes || '';
   document.getElementById('cTerms').value = c.terms_and_conditions || DEFAULT_TERMS;
   document.getElementById('cSignedFile').value = '';
@@ -1743,6 +1891,7 @@ function cancelEditContract(){
   document.getElementById('cAdvanceProofCurrent').textContent = '';
   document.getElementById('cDepositProof').value = '';
   document.getElementById('cDepositProofCurrent').textContent = '';
+  resetEscalationForm();
 
   // Editing narrows Location/Building to that contract's unit(s) — reset
   // back to "All" so every unit is selectable again for the next contract.
@@ -1877,7 +2026,8 @@ async function saveContract(){
     term_years: rentPeriod === 'annual' ? termValue : null,
     rent_due_day: parseInt(document.getElementById('cDueDay').value) || 1,
     notes: document.getElementById('cNotes').value.trim(),
-    terms_and_conditions: document.getElementById('cTerms').value
+    terms_and_conditions: document.getElementById('cTerms').value,
+    ...readEscalationFromForm()
   };
 
   const { data: unitRows } = await sb.from('units').select('id, unit_name').in('id', unitIds);
@@ -1887,6 +2037,8 @@ async function saveContract(){
     const { error } = await sb.from('contracts').update(payload).eq('id', editingContractId);
     if(error) return alert('Error: ' + error.message);
     await sb.rpc('regenerate_schedule_from_today', { p_contract_id: editingContractId });
+    // re-price any period with nothing paid yet so the new escalation shows in rent due
+    await sb.rpc('apply_escalation_to_unpaid', { p_contract_id: editingContractId });
     await uploadSignedFileIfSelected(editingContractId);
     await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', editingContractId, 'advance_proof_path', 'advance_proof_name');
     await uploadFileToTable('cDepositProof', 'contracts', 'contracts', 'id', editingContractId, 'deposit_proof_path', 'deposit_proof_name');
@@ -1939,6 +2091,7 @@ async function saveContract(){
     document.getElementById('cDepositProof').value = '';
     document.getElementById('cDepositProofCurrent').textContent = '';
     ['cNewName','cNewAddress','cNewBusiness','cNewContact','cNewEmail'].forEach(id=>document.getElementById(id).value='');
+    resetEscalationForm();
   }
 
   loadContractsTable(); loadUnitsTable(); loadPayContractSelect(); loadDashboard(); loadRenters(); loadContractCascadingData();
@@ -2034,7 +2187,7 @@ function contractRowHtml(c, unitNames, opts){
     <tr class="${opts.rowClass||''}" ${opts.hidden ? 'style="display:none;"' : ''}>
       <td>${opts.indent ? '<span class="muted">↳ </span>' : ''}${(unitNames||[]).filter(Boolean).join(', ') || '—'}</td>
       <td>${c.renters?.name||'—'}</td>
-      <td>${fmtMoney(c.rent_amount)}</td>
+      <td>${escalationActive(c) ? `${fmtMoney(currentEscalatedRent(c))}<br><span class="muted" style="font-size:11px;" title="Starting rent ${fmtMoney(c.rent_amount)}">${escalationLabel(c)}</span>` : fmtMoney(c.rent_amount)}</td>
       <td>${fmtDate(c.start_date)}</td>
       <td>${fmtDate(c.end_date)}</td>
       <td><span class="badge b-${c.status}">${c.status}</span>${opts.balance?.past_end_date ? '<br><span class="badge b-expiring" title="No newer contract is on file, so the same terms continue">past end · continuing</span>' : ''}</td>
@@ -2261,6 +2414,7 @@ async function printContract(id){
     <h3>4. Rent</h3>
     <p class="clause">4.1. ${rentClause}</p>
     ${!isDaily ? `<p class="clause">4.2. After the lapse of the agreed term, the rent may be renegotiated upon the written agreement of both parties.</p>` : ''}
+    ${escalationActive(c) ? `<p class="clause">${isDaily ? '4.2' : '4.3'}. ${escalationClauseHtml(c)}</p>` : ''}
 
     <h3>5. Deposit and Advance Rent</h3>
     <p class="clause">5.1. The Lessee shall pay an advance of ${fmtMoney(c.advance)} and a security deposit of ${fmtMoney(c.deposit)}, for a total initial payment of ${fmtMoney(totalInitial)}.</p>

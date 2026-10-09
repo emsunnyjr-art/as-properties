@@ -140,6 +140,34 @@ async function init(){
   setupSignaturePad();
 }
 
+function escAddMonths(iso, m){
+  const [y,mo,d] = iso.split('-').map(Number);
+  const t = new Date(Date.UTC(y, mo-1+m, 1));
+  const dim = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth()+1, 0)).getUTCDate();
+  t.setUTCDate(Math.min(d, dim));
+  return t.toISOString().slice(0,10);
+}
+function escalationClause(c){
+  if(!(c.escalation_type==='percent' || c.escalation_type==='amount') || !(Number(c.escalation_value)>0) || !(Number(c.escalation_every_months)>0)) return '';
+  const period = c.rent_period || 'monthly', monthly = period === 'monthly';
+  const every = Number(c.escalation_every_months), v = Number(c.escalation_value);
+  const everyText = every % 12 === 0 ? `${every/12} year${every/12===1?'':'s'}` : `${every} month${every===1?'':'s'}`;
+  const inc = c.escalation_type==='percent' ? `${v}%` : `${numberToWords(v)} Pesos (${fmtMoney(v)})`;
+  const end = c.end_date || escAddMonths(c.start_date, 1200);
+  let amt = Number(c.rent_amount) || 0; const parts = [];
+  for(let n=1; n<=200; n++){
+    let eff = escAddMonths(c.start_date, n*every);
+    if(monthly) eff = eff.slice(0,7) + '-01';
+    if(eff > end) break;
+    amt = c.escalation_type==='percent' ? Math.round(amt*(1+v/100)*100)/100 : amt + v;
+    const shown = monthly ? new Date(eff+'T00:00:00').toLocaleDateString(undefined,{month:'long', year:'numeric'}) : fmtDate(eff);
+    parts.push(`${fmtMoney(amt)} effective ${shown}`);
+  }
+  return `The ${period} rent shall be increased by ${inc} every ${everyText}, counted from the commencement date of this Agreement, each increase being applied on the rent then in effect.`
+    + (parts.length ? ' Accordingly: ' + parts.join('; ') + '.' : '')
+    + ' Should the Lessee continue to occupy the premises after the term without a new written contract, the same rent and escalation shall continue to apply.';
+}
+
 function renderContract(c){
   const isDaily = c.rent_period === 'daily';
   const isAnnual = c.rent_period === 'annual';
@@ -168,6 +196,7 @@ function renderContract(c){
     <p>3.1. ${termClause}</p>
     <h3>4. Rent</h3>
     <p>4.1. ${rentClause}</p>
+    ${escalationClause(c) ? `<p>4.2. ${escalationClause(c)}</p>` : ''}
     <h3>5. Deposit and Advance Rent</h3>
     <p>5.1. Advance: ${fmtMoney(c.advance)}. Deposit: ${fmtMoney(c.deposit)}. Total initial payment: ${fmtMoney(totalInitial)}.</p>
     <div>${(c.terms_and_conditions||'').split(/\n\s*\n/).map(block=>{
