@@ -278,16 +278,18 @@
       <div class="row" style="margin-top:8px;">
         <div>
           <label>Renter</label>
-          <select id="renterMode" onchange="onRenterModeChange()">
+          <select id="renterMode" onchange="renterModeTouched=true;onRenterModeChange()">
+            <option value="existing">Existing renter (select from saved list)</option>
             <option value="new">New renter (fill in below)</option>
-            <option value="existing">Existing renter (select from list)</option>
           </select>
         </div>
         <div id="existingRenterBlock" class="hidden">
           <label>Select renter</label>
-          <select id="cRenterExisting"></select>
+          <input id="cRenterSearch" placeholder="Type to search name / business…" oninput="filterRenterOptions()" style="margin-bottom:6px;">
+          <select id="cRenterExisting" onchange="onRenterSelected()"></select>
         </div>
       </div>
+      <div id="renterDetailsBox" class="muted hidden" style="margin:6px 0 10px 0;padding:8px 10px;border:1px solid var(--line, #ddd);border-radius:8px;"></div>
 
       <div id="newRenterBlock">
         <div class="row">
@@ -605,9 +607,36 @@ async function loadContractCascadingData(){
   loadUnitsFilterDropdowns();
   loadContractUnitFilterDropdown();
 
-  const { data: renters } = await sb.from('renters').select('id, name, business_name').order('name');
-  document.getElementById('cRenterExisting').innerHTML =
-    (renters||[]).map(r=>`<option value="${r.id}">${r.name}${r.business_name ? ' — '+r.business_name : ''}</option>`).join('');
+  const { data: renters } = await sb.from('renters').select('id, name, business_name, address, contact_number, email').order('name');
+  savedRenters = renters || [];
+  const prev = document.getElementById('cRenterExisting').value;
+  renderRenterOptions(prev);
+  // Saved renters exist → default to picking from them (unless editing / already chosen "new")
+  if(!editingContractId && !renterModeTouched){
+    document.getElementById('renterMode').value = savedRenters.length ? 'existing' : 'new';
+    onRenterModeChange();
+  }
+}
+
+let savedRenters = [], renterModeTouched = false;
+function renderRenterOptions(keepId){
+  const q = (document.getElementById('cRenterSearch')?.value || '').trim().toLowerCase();
+  const list = savedRenters.filter(r=>!q || `${r.name} ${r.business_name||''}`.toLowerCase().includes(q));
+  const sel = document.getElementById('cRenterExisting');
+  sel.innerHTML = `<option value="">— choose a saved renter (${list.length}) —</option>` +
+    list.map(r=>`<option value="${r.id}">${r.name}${r.business_name ? ' — '+r.business_name : ''}</option>`).join('');
+  if(keepId && list.some(r=>r.id===keepId)) sel.value = keepId;
+  onRenterSelected();
+}
+function filterRenterOptions(){ renderRenterOptions(document.getElementById('cRenterExisting').value); }
+function onRenterSelected(){
+  const id = document.getElementById('cRenterExisting').value;
+  const box = document.getElementById('renterDetailsBox');
+  const r = savedRenters.find(x=>x.id===id);
+  if(!r || document.getElementById('renterMode').value !== 'existing'){ box.classList.add('hidden'); box.innerHTML=''; return; }
+  const esc = t => String(t||'—').replace(/</g,'&lt;');
+  box.innerHTML = `<strong>${esc(r.name)}</strong> · ${esc(r.business_name)}<br>Address: ${esc(r.address)}<br>Contact: ${esc(r.contact_number)} · Email: ${esc(r.email)}<br><span style="font-size:12px;">Saved details are used for the contract.</span>`;
+  box.classList.remove('hidden');
 }
 
 function populateBuildingDropdown(){
@@ -665,6 +694,7 @@ function onRenterModeChange(){
   const mode = document.getElementById('renterMode').value;
   document.getElementById('existingRenterBlock').classList.toggle('hidden', mode!=='existing');
   document.getElementById('newRenterBlock').classList.toggle('hidden', mode==='existing');
+  onRenterSelected();
 }
 
 // ---------- RENT ESCALATION ----------
@@ -1851,7 +1881,10 @@ async function startEditContract(id){
 
   document.getElementById('renterMode').value = 'existing';
   onRenterModeChange();
+  document.getElementById('cRenterSearch').value = '';
+  renderRenterOptions(c.renter_id);
   document.getElementById('cRenterExisting').value = c.renter_id;
+  onRenterSelected();
 
   document.getElementById('cRentPeriod').value = c.rent_period || 'monthly';
   onRentPeriodChange();
@@ -1882,7 +1915,11 @@ function cancelEditContract(){
   document.getElementById('contractFormTitle').textContent = 'New contract';
   document.getElementById('contractSubmitBtn').textContent = 'Create Contract';
   document.getElementById('cancelEditBtn').classList.add('hidden');
-  document.getElementById('renterMode').value = 'new';
+  renterModeTouched = false;
+  document.getElementById('renterMode').value = savedRenters.length ? 'existing' : 'new';
+  document.getElementById('cRenterExisting').value = '';
+  document.getElementById('cRenterSearch').value = '';
+  renderRenterOptions('');
   onRenterModeChange();
   document.getElementById('cTerms').value = DEFAULT_TERMS;
   document.getElementById('cSignedFile').value = '';
@@ -2092,6 +2129,7 @@ async function saveContract(){
     document.getElementById('cDepositProofCurrent').textContent = '';
     ['cNewName','cNewAddress','cNewBusiness','cNewContact','cNewEmail'].forEach(id=>document.getElementById(id).value='');
     resetEscalationForm();
+    renterModeTouched = false;
   }
 
   loadContractsTable(); loadUnitsTable(); loadPayContractSelect(); loadDashboard(); loadRenters(); loadContractCascadingData();
