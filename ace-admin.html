@@ -287,7 +287,8 @@
         <div id="existingRenterBlock" class="hidden">
           <label>Select renter</label>
           <input id="cRenterSearch" placeholder="Type to search name / business…" oninput="filterRenterOptions()" style="margin-bottom:6px;">
-          <select id="cRenterExisting" onchange="onRenterSelected()"></select>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:normal;margin:0 0 6px 0;"><input type="checkbox" id="cRenterShowAll" style="width:auto;margin:0;" onchange="filterRenterOptions()"> Show all renters (ignore the building filter)</label>
+          <select id="cRenterExisting" size="7" onchange="onRenterSelected()"></select>
         </div>
       </div>
       <div id="renterDetailsBox" class="muted hidden" style="margin:6px 0 10px 0;padding:8px 10px;border:1px solid var(--line, #ddd);border-radius:8px;"></div>
@@ -610,6 +611,14 @@ async function loadContractCascadingData(){
 
   const { data: renters } = await sb.from('renters').select('id, name, business_name, address, contact_number, email').order('name');
   savedRenters = renters || [];
+  // Which buildings has each renter rented in? (used to filter the renter list by building)
+  const { data: cuLinks } = await sb.from('contract_units').select('unit_id, contracts(renter_id)');
+  const bldOfUnit = {}; allUnits.forEach(u=>{ bldOfUnit[u.id] = u.building_id; });
+  renterBuildings = {};
+  (cuLinks||[]).forEach(l=>{
+    const rid = l.contracts?.renter_id, b = bldOfUnit[l.unit_id];
+    if(rid && b) (renterBuildings[rid] ||= new Set()).add(b);
+  });
   const prev = document.getElementById('cRenterExisting').value;
   renderRenterOptions(prev);
   // Saved renters exist → default to picking from them (unless editing / already chosen "new")
@@ -619,10 +628,24 @@ async function loadContractCascadingData(){
   }
 }
 
-let savedRenters = [], renterModeTouched = false;
+let savedRenters = [], renterModeTouched = false, renterBuildings = {};
+// Building filter for the renter list: renters who have rented in the selected
+// building (or location), plus renters with no contract yet. "Show all" overrides.
+function renterInScope(r){
+  if(document.getElementById('cRenterShowAll')?.checked) return true;
+  const bldId = document.getElementById('cBuilding')?.value;
+  const locId = document.getElementById('cLocation')?.value;
+  let scope = null;
+  if(bldId) scope = new Set([bldId]);
+  else if(locId) scope = new Set(allBuildings.filter(b=>b.location_id===locId).map(b=>b.id));
+  if(!scope) return true;
+  const mine = renterBuildings[r.id];
+  if(!mine || mine.size === 0) return true; // no contract yet → always offer
+  return [...mine].some(b=>scope.has(b));
+}
 function renderRenterOptions(keepId){
   const q = (document.getElementById('cRenterSearch')?.value || '').trim().toLowerCase();
-  const list = savedRenters.filter(r=>!q || `${r.name} ${r.business_name||''}`.toLowerCase().includes(q));
+  const list = savedRenters.filter(r=>renterInScope(r) && (!q || `${r.name} ${r.business_name||''}`.toLowerCase().includes(q)));
   const sel = document.getElementById('cRenterExisting');
   sel.innerHTML = `<option value="">— choose a saved renter (${list.length}) —</option>` +
     list.map(r=>`<option value="${r.id}">${r.name}${r.business_name ? ' — '+r.business_name : ''}</option>`).join('');
@@ -673,6 +696,9 @@ function populateUnitDropdown(){
 
   const selectedBuilding = allBuildings.find(b=>b.id===bldId);
   document.getElementById('cFloorPlanBtn').classList.toggle('hidden', !(selectedBuilding && selectedBuilding.floor_plan_path));
+  if(typeof renderRenterOptions === 'function' && document.getElementById('cRenterExisting')){
+    renderRenterOptions(document.getElementById('cRenterExisting').value);
+  }
 }
 
 function getSelectedUnitIds(){
