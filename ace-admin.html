@@ -299,7 +299,7 @@
         <div id="existingRenterBlock" class="hidden">
           <label>Select renter</label>
           <input id="cRenterSearch" placeholder="Type to search name / business…" oninput="filterRenterOptions()" style="margin-bottom:6px;">
-          <label style="display:flex;align-items:center;gap:6px;font-weight:normal;margin:0 0 6px 0;"><input type="checkbox" id="cRenterShowAll" style="width:auto;margin:0;" onchange="filterRenterOptions()"> Show all renters (ignore the building filter)</label>
+          <select id="cRenterBldFilter" onchange="filterRenterOptions()" style="margin-bottom:6px;" title="Only affects this renter list — not the building the contract is for"></select>
           <select id="cRenterExisting" size="7" onchange="onRenterSelected()"></select>
         </div>
       </div>
@@ -630,6 +630,7 @@ async function loadContractCascadingData(){
     if(rid && b) (renterBuildings[rid] ||= new Set()).add(b);
   });
   const prev = document.getElementById('cRenterExisting').value;
+  fillRenterBldFilter();
   renderRenterOptions(prev);
   // Saved renters exist → default to picking from them (unless editing / already chosen "new")
   if(!editingContractId && !renterModeTouched){
@@ -639,19 +640,20 @@ async function loadContractCascadingData(){
 }
 
 let savedRenters = [], renterModeTouched = false, renterBuildings = {};
-// Building filter for the renter list: renters who have rented in the selected
-// building (or location), plus renters with no contract yet. "Show all" overrides.
+// Renter-list filter: independent of the building the contract is being made for.
+// Pick the building where the renter currently or previously rented to find them.
 function renterInScope(r){
-  if(document.getElementById('cRenterShowAll')?.checked) return true;
-  const bldId = document.getElementById('cBuilding')?.value;
-  const locId = document.getElementById('cLocation')?.value;
-  let scope = null;
-  if(bldId) scope = new Set([bldId]);
-  else if(locId) scope = new Set(allBuildings.filter(b=>b.location_id===locId).map(b=>b.id));
-  if(!scope) return true;
-  const mine = renterBuildings[r.id];
-  if(!mine || mine.size === 0) return true; // no contract yet → always offer
-  return [...mine].some(b=>scope.has(b));
+  const bldId = document.getElementById('cRenterBldFilter')?.value;
+  if(!bldId) return true;
+  return !!(renterBuildings[r.id] && renterBuildings[r.id].has(bldId));
+}
+function fillRenterBldFilter(){
+  const sel = document.getElementById('cRenterBldFilter');
+  if(!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = `<option value="">Find renter in: all buildings (every renter)</option>` +
+    allBuildings.map(b=>`<option value="${b.id}">Rented in: ${b.name}</option>`).join('');
+  if(allBuildings.some(b=>b.id===prev)) sel.value = prev;
 }
 function renderRenterOptions(keepId){
   const q = (document.getElementById('cRenterSearch')?.value || '').trim().toLowerCase();
@@ -706,9 +708,6 @@ function populateUnitDropdown(){
 
   const selectedBuilding = allBuildings.find(b=>b.id===bldId);
   document.getElementById('cFloorPlanBtn').classList.toggle('hidden', !(selectedBuilding && selectedBuilding.floor_plan_path));
-  if(typeof renderRenterOptions === 'function' && document.getElementById('cRenterExisting')){
-    renderRenterOptions(document.getElementById('cRenterExisting').value);
-  }
 }
 
 function getSelectedUnitIds(){
@@ -2022,6 +2021,7 @@ async function startEditContract(id){
   document.getElementById('renterMode').value = 'existing';
   onRenterModeChange();
   document.getElementById('cRenterSearch').value = '';
+  document.getElementById('cRenterBldFilter').value = '';
   renderRenterOptions(c.renter_id);
   document.getElementById('cRenterExisting').value = c.renter_id;
   onRenterSelected();
