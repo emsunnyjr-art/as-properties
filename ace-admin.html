@@ -950,7 +950,14 @@ async function loadBalanceSummary(){
 }
 
 async function loadDashboard(){
-  const { data: units } = await sb.from('v_unit_status').select('*');
+  const { data: unitRows } = await sb.from('v_unit_status').select('*');
+  // The view has one row per contract; count each unit once (occupied wins)
+  const unitMap = new Map();
+  (unitRows||[]).forEach(u=>{
+    const prev = unitMap.get(u.unit_id);
+    if(!prev || (prev.occupancy!=='occupied' && u.occupancy==='occupied')) unitMap.set(u.unit_id, u);
+  });
+  const units = [...unitMap.values()];
   const occupied = (units||[]).filter(u=>u.occupancy==='occupied').length;
   const vacant = (units||[]).filter(u=>u.occupancy==='vacant').length;
 
