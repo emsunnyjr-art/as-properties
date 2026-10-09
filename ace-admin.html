@@ -1417,7 +1417,7 @@ async function startEditBuilding(id){
   document.getElementById('bldName').value = b.name;
   document.getElementById('bldDesc').value = b.description || '';
   document.getElementById('bldFloorPlan').value = '';
-  document.getElementById('bldFloorPlanCurrent').textContent = b.floor_plan_name ? `Current: ${b.floor_plan_name} (choose a new file to replace it)` : 'No floor plan uploaded yet.';
+  showCurrentFile('bldFloorPlanCurrent', b.floor_plan_path, b.floor_plan_name, 'Floor plan', 'No floor plan uploaded yet.');
   document.getElementById('bldFormTitle').textContent = 'Editing building';
   document.getElementById('bldSubmitBtn').textContent = 'Update Building';
   document.getElementById('cancelBldEditBtn').classList.remove('hidden');
@@ -1735,7 +1735,7 @@ async function startEditRenter(id){
   document.getElementById('rEmail').value = r.email || '';
   document.getElementById('rAddress').value = r.address || '';
   document.getElementById('rIdFile').value = '';
-  document.getElementById('rIdFileCurrent').textContent = r.id_file_name ? `Current ID on file: ${r.id_file_name} (choose a new file to replace it)` : 'No ID uploaded yet.';
+  showCurrentFile('rIdFileCurrent', r.id_file_path, r.id_file_name, 'Renter ID', 'No ID uploaded yet.');
   document.getElementById('renterFormTitle').textContent = 'Editing renter';
   document.getElementById('renterSubmitBtn').textContent = 'Update Renter';
   document.getElementById('cancelRenterEditBtn').classList.remove('hidden');
@@ -2095,11 +2095,11 @@ async function startEditContract(id){
   document.getElementById('cNotes').value = c.notes || '';
   document.getElementById('cTerms').value = c.terms_and_conditions || DEFAULT_TERMS;
   document.getElementById('cSignedFile').value = '';
-  document.getElementById('cSignedFileCurrent').textContent = c.signed_file_name ? `Current file: ${c.signed_file_name} (choose a new file to replace it)` : 'No file attached yet.';
+  showCurrentFile('cSignedFileCurrent', c.signed_file_path, c.signed_file_name, 'Signed contract file', 'No file attached yet.');
   document.getElementById('cAdvanceProof').value = '';
-  document.getElementById('cAdvanceProofCurrent').textContent = c.advance_proof_name ? `Current file: ${c.advance_proof_name} (choose a new file to replace it)` : 'No proof uploaded yet.';
+  showCurrentFile('cAdvanceProofCurrent', c.advance_proof_path, c.advance_proof_name, 'Advance payment proof', 'No proof uploaded yet.');
   document.getElementById('cDepositProof').value = '';
-  document.getElementById('cDepositProofCurrent').textContent = c.deposit_proof_name ? `Current file: ${c.deposit_proof_name} (choose a new file to replace it)` : 'No proof uploaded yet.';
+  showCurrentFile('cDepositProofCurrent', c.deposit_proof_path, c.deposit_proof_name, 'Deposit payment proof', 'No proof uploaded yet.');
 
   document.querySelector('#tab-contracts').scrollIntoView({behavior:'smooth'});
 }
@@ -2136,6 +2136,20 @@ function cancelEditContract(){
 // Generic helpers reused by every upload slot in the app (signed contract,
 // renter ID, advance/deposit proof, payment receipts) — all share the same
 // private 'contract-files' Storage bucket, just organized by folder prefix.
+// Shows the file already on record (name + View button) in edit mode; picking a
+// new file in the input below replaces it, leaving it empty keeps the current one.
+const currentFileRefs = {};
+function showCurrentFile(elId, path, name, title, emptyText){
+  const el = document.getElementById(elId);
+  if(!path){ delete currentFileRefs[elId]; el.textContent = emptyText; return; }
+  currentFileRefs[elId] = { path, title };
+  el.innerHTML = `📎 <strong>${String(name||'file').replace(/</g,'&lt;')}</strong> <button type="button" class="btn secondary small" onclick="viewCurrentFile('${elId}')">View</button> <span>— kept as is. Choose a new file below only if you want to replace it.</span>`;
+}
+function viewCurrentFile(elId){
+  const ref = currentFileRefs[elId];
+  if(ref) viewStoredFile(ref.path, ref.title);
+}
+
 async function uploadFileToTable(fileInputId, folderPrefix, table, idColumn, id, pathColumn, nameColumn){
   const fileInput = document.getElementById(fileInputId);
   const file = fileInput.files[0];
