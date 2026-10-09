@@ -249,9 +249,21 @@
     <div id="renterDetailPanel"></div>
 
     <div class="card">
-      <p class="section-title">All renters</p>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+        <p class="section-title" style="margin:0;">All renters <span class="muted" id="rentersCountLabel"></span></p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <input id="rentersSearch" placeholder="Search name / business…" style="width:180px;margin:0;" oninput="loadRenters()">
+          <select id="rentersFilterLocation" style="width:180px;margin:0;" onchange="onRentersFilterLocationChange()"></select>
+          <select id="rentersFilterBuilding" style="width:200px;margin:0;" onchange="loadRenters()"></select>
+          <select id="rentersFilterScope" style="width:170px;margin:0;" onchange="loadRenters()">
+            <option value="active">Current renters</option>
+            <option value="any">Current + past</option>
+            <option value="none">No contract yet</option>
+          </select>
+        </div>
+      </div>
       <table>
-        <thead><tr><th>Name</th><th>Business</th><th>Contact</th><th>Email</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Business</th><th>Where (building · unit)</th><th>Contact</th><th>Email</th><th></th></tr></thead>
         <tbody id="rentersTable"></tbody>
       </table>
     </div>
@@ -330,13 +342,11 @@
           </select>
         </div>
         <div id="cEscValueField" class="hidden"><label id="cEscValueLabel">Increase</label><input id="cEscValue" type="number" step="0.01" min="0" value="0" oninput="onEscalationChange()"></div>
-        <div id="cEscEveryField" class="hidden"><label>Every</label>
-          <div style="display:flex;gap:6px;">
-            <input id="cEscEvery" type="number" min="1" value="2" style="width:80px;" oninput="onEscalationChange()">
-            <select id="cEscUnit" onchange="onEscalationChange()"><option value="years">year(s)</option><option value="months">month(s)</option></select>
-          </div>
+        <div id="cEscEveryField" class="hidden"><label>Months passed before each increase</label>
+          <input id="cEscEvery" type="number" min="1" step="1" value="24" placeholder="e.g. 24 = every 2 years" oninput="onEscalationChange()">
         </div>
       </div>
+      <label id="cEscClauseField" class="hidden" style="display:flex;align-items:center;gap:8px;font-weight:normal;margin:4px 0 0 0;"><input type="checkbox" id="cEscInContract" checked style="width:auto;margin:0;"> Include the rent-increase clause in the contract (the increase still applies to rent due either way)</label>
       <div id="cEscPreview" class="muted" style="margin:4px 0 10px 0;"></div>
 
       <div><label>Notes</label><textarea id="cNotes" rows="2"></textarea></div>
@@ -783,12 +793,12 @@ function readEscalationFromForm(){
   const type = document.getElementById('cEscType').value;
   const val = parseFloat(document.getElementById('cEscValue').value) || 0;
   const n = parseInt(document.getElementById('cEscEvery').value) || 0;
-  const unit = document.getElementById('cEscUnit').value;
   const active = type!=='none' && val>0 && n>0;
   return {
     escalation_type: active ? type : 'none',
     escalation_value: active ? val : 0,
-    escalation_every_months: active ? (unit==='years' ? n*12 : n) : null
+    escalation_every_months: active ? n : null,
+    escalation_in_contract: document.getElementById('cEscInContract').checked
   };
 }
 function onEscalationChange(){
@@ -796,6 +806,7 @@ function onEscalationChange(){
   const on = type !== 'none';
   document.getElementById('cEscValueField').classList.toggle('hidden', !on);
   document.getElementById('cEscEveryField').classList.toggle('hidden', !on);
+  document.getElementById('cEscClauseField').classList.toggle('hidden', !on);
   document.getElementById('cEscValueLabel').textContent = type==='percent' ? 'Increase (%)' : 'Increase (₱ per period)';
   const box = document.getElementById('cEscPreview');
   if(!on){ box.innerHTML = ''; return; }
@@ -825,16 +836,15 @@ function loadEscalationIntoForm(c){
   const type = c.escalation_type || 'none';
   document.getElementById('cEscType').value = type;
   document.getElementById('cEscValue').value = Number(c.escalation_value)||0;
-  const m = Number(c.escalation_every_months)||24;
-  if(m % 12 === 0){ document.getElementById('cEscEvery').value = m/12; document.getElementById('cEscUnit').value = 'years'; }
-  else { document.getElementById('cEscEvery').value = m; document.getElementById('cEscUnit').value = 'months'; }
+  document.getElementById('cEscEvery').value = Number(c.escalation_every_months)||24;
+  document.getElementById('cEscInContract').checked = c.escalation_in_contract !== false;
   onEscalationChange();
 }
 function resetEscalationForm(){
   document.getElementById('cEscType').value = 'none';
   document.getElementById('cEscValue').value = 0;
-  document.getElementById('cEscEvery').value = 2;
-  document.getElementById('cEscUnit').value = 'years';
+  document.getElementById('cEscEvery').value = 24;
+  document.getElementById('cEscInContract').checked = true;
   onEscalationChange();
 }
 function escalationClauseHtml(c){
@@ -1752,11 +1762,71 @@ async function showRenterDetail(renterId){
   panel.scrollIntoView({behavior:'smooth'});
 }
 
+function fillRentersFilterLocations(locs){
+  const sel = document.getElementById('rentersFilterLocation');
+  if(sel.options.length) return;
+  sel.innerHTML = `<option value="">All locations</option>` + locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
+}
+function fillRentersFilterBuildings(blds){
+  const locId = document.getElementById('rentersFilterLocation').value;
+  const sel = document.getElementById('rentersFilterBuilding');
+  const prev = sel.value;
+  const list = locId ? blds.filter(b=>b.location_id===locId) : blds;
+  sel.innerHTML = `<option value="">All buildings</option>` + list.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
+  if(list.some(b=>b.id===prev)) sel.value = prev;
+}
+function onRentersFilterLocationChange(){ document.getElementById('rentersFilterBuilding').value = ''; rentersFilterBuildingsStale = true; loadRenters(); }
+let rentersFilterBuildingsStale = true;
+
 async function loadRenters(){
-  const { data } = await sb.from('renters').select('*').order('name');
-  document.getElementById('rentersTable').innerHTML = (data||[]).map(r=>`
+  const [{ data }, { data: locs }, { data: blds }, { data: units }, { data: links }] = await Promise.all([
+    sb.from('renters').select('*').order('name'),
+    sb.from('locations').select('id, name').order('name'),
+    sb.from('buildings').select('id, name, location_id').order('name'),
+    sb.from('units').select('id, unit_name, building_id'),
+    sb.from('contract_units').select('unit_id, contracts(renter_id, status)')
+  ]);
+  fillRentersFilterLocations(locs||[]);
+  if(rentersFilterBuildingsStale || !document.getElementById('rentersFilterBuilding').options.length){
+    fillRentersFilterBuildings(blds||[]); rentersFilterBuildingsStale = false;
+  }
+
+  const unitById = {}; (units||[]).forEach(u=>{ unitById[u.id] = u; });
+  const bldById = {}; (blds||[]).forEach(b=>{ bldById[b.id] = b; });
+  // per renter: active placements and any placements (building -> unit names)
+  const active = {}, any = {};
+  (links||[]).forEach(l=>{
+    const rid = l.contracts?.renter_id, u = unitById[l.unit_id];
+    if(!rid || !u) return;
+    ((any[rid] ||= {})[u.building_id] ||= new Set()).add(u.unit_name);
+    if(l.contracts.status === 'active') ((active[rid] ||= {})[u.building_id] ||= new Set()).add(u.unit_name);
+  });
+
+  const locId = document.getElementById('rentersFilterLocation').value;
+  const bldId = document.getElementById('rentersFilterBuilding').value;
+  const scope = document.getElementById('rentersFilterScope').value;
+  const q = (document.getElementById('rentersSearch').value || '').trim().toLowerCase();
+  const bldOk = b => bldId ? b===bldId : (locId ? bldById[b]?.location_id===locId : true);
+  const filtering = !!(bldId || locId);
+
+  const rows = (data||[]).filter(r=>{
+    if(q && !`${r.name} ${r.business_name||''}`.toLowerCase().includes(q)) return false;
+    if(scope==='none') return !any[r.id];
+    const src = scope==='any' ? any[r.id] : active[r.id];
+    if(!src) return scope==='any' && !filtering; // "Current + past" without a filter lists everyone
+    return !filtering || Object.keys(src).some(bldOk);
+  });
+
+  document.getElementById('rentersCountLabel').textContent = `(${rows.length})`;
+  const where = r => {
+    const src = scope==='any' ? any[r.id] : active[r.id];
+    if(!src) return '<span class="muted">—</span>';
+    return Object.entries(src).filter(([b])=>!filtering || bldOk(b))
+      .map(([b, names])=>`${(bldById[b]?.name||'').replace(/</g,'&lt;')} · ${[...names].join(', ')}`).join('<br>') || '—';
+  };
+  document.getElementById('rentersTable').innerHTML = rows.map(r=>`
     <tr>
-      <td>${r.name}</td><td>${r.business_name||'—'}</td><td>${r.contact_number||'—'}</td><td>${r.email||'—'}</td>
+      <td>${r.name}</td><td>${r.business_name||'—'}</td><td style="font-size:13px;">${where(r)}</td><td>${r.contact_number||'—'}</td><td>${r.email||'—'}</td>
       <td>
         <button class="btn small" onclick="showRenterDetail('${r.id}')">View</button>
         <button class="btn secondary small" onclick="startEditRenter('${r.id}')">Edit</button>
@@ -1765,7 +1835,7 @@ async function loadRenters(){
         <a class="action" href="${smsHref(r.contact_number)}">💬</a>
       </td>
     </tr>
-  `).join('');
+  `).join('') || '<tr><td colspan="6" class="muted">No renters match this filter.</td></tr>';
 }
 
 
@@ -2522,7 +2592,7 @@ async function printContract(id){
     <h3>4. Rent</h3>
     <p class="clause">4.1. ${rentClause}</p>
     ${!isDaily ? `<p class="clause">4.2. After the lapse of the agreed term, the rent may be renegotiated upon the written agreement of both parties.</p>` : ''}
-    ${escalationActive(c) ? `<p class="clause">${isDaily ? '4.2' : '4.3'}. ${escalationClauseHtml(c)}</p>` : ''}
+    ${escalationActive(c) && c.escalation_in_contract !== false ? `<p class="clause">${isDaily ? '4.2' : '4.3'}. ${escalationClauseHtml(c)}</p>` : ''}
 
     <h3>5. Deposit and Advance Rent</h3>
     <p class="clause">5.1. The Lessee shall pay an advance of ${fmtMoney(c.advance)} and a security deposit of ${fmtMoney(c.deposit)}, for a total initial payment of ${fmtMoney(totalInitial)}.</p>

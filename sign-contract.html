@@ -148,6 +148,7 @@ function escAddMonths(iso, m){
   return t.toISOString().slice(0,10);
 }
 function escalationClause(c){
+  if(c.escalation_in_contract === false) return '';
   if(!(c.escalation_type==='percent' || c.escalation_type==='amount') || !(Number(c.escalation_value)>0) || !(Number(c.escalation_every_months)>0)) return '';
   const period = c.rent_period || 'monthly', monthly = period === 'monthly';
   const every = Number(c.escalation_every_months), v = Number(c.escalation_value);
