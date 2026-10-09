@@ -204,6 +204,7 @@
         <div><label>Description</label><input id="unitDesc"></div>
       </div>
       <button class="btn" id="unitSubmitBtn" onclick="saveUnit()">Add Unit</button>
+      <span id="unitSavedMsg" class="muted" style="margin-left:10px;"></span>
       <button class="btn secondary hidden" id="cancelUnitEditBtn" onclick="cancelEditUnit()">Cancel edit</button>
     </div>
 
@@ -1346,14 +1347,41 @@ async function saveUnit(){
   const price = parseFloat(document.getElementById('unitPrice').value) || 0;
   const description = document.getElementById('unitDesc').value.trim();
   if(!unit_name) return alert('Unit name required');
+  if(!building_id) return alert('Choose a building first');
+  let savedId = editingUnitId;
   if(editingUnitId){
-    await sb.from('units').update({ building_id, unit_name, price, description }).eq('id', editingUnitId);
+    const { error } = await sb.from('units').update({ building_id, unit_name, price, description }).eq('id', editingUnitId);
+    if(error) return alert('Could not save unit: ' + error.message);
   } else {
-    await sb.from('units').insert({ building_id, unit_name, price, description });
+    // Same name already in this building? Ask before creating a duplicate.
+    const { data: dup } = await sb.from('units').select('id').eq('building_id', building_id).ilike('unit_name', unit_name);
+    if(dup && dup.length && !confirm(`"${unit_name}" already exists in this building. Add another one with the same name?`)) return;
+    const { data: created, error } = await sb.from('units').insert({ building_id, unit_name, price, description }).select().single();
+    if(error) return alert('Could not add unit: ' + error.message);
+    savedId = created.id;
   }
   cancelEditUnit();
-  loadUnitsTable(); loadContractCascadingData();
+  // Show the building the unit went into, so it is visible right away
+  const bld = allBuildings.find(b=>b.id===building_id);
+  if(bld){
+    document.getElementById('unitsFilterLocation').value = bld.location_id || '';
+    populateUnitsFilterBuilding();
+    document.getElementById('unitsFilterBuilding').value = building_id;
+  }
+  document.getElementById('unitsFilterStatus').value = '';
+  await loadUnitsTable();
+  loadContractCascadingData();
+  lastSavedUnitId = savedId;
+  const row = document.getElementById('unitRow-' + savedId);
+  if(row){
+    row.style.background = 'rgba(46,160,67,.25)';
+    row.scrollIntoView({behavior:'smooth', block:'center'});
+    setTimeout(()=>{ row.style.background=''; }, 4000);
+  }
+  const msg = document.getElementById('unitSavedMsg');
+  if(msg){ msg.textContent = `✓ Saved "${unit_name}"${bld ? ' in ' + bld.name : ''}. You can add the next unit.`; }
 }
+let lastSavedUnitId = null;
 
 async function startEditUnit(id){
   const { data: u } = await sb.from('units').select('*').eq('id', id).single();
@@ -1523,7 +1551,16 @@ async function loadUnitsTable(){
   const statusFilter = document.getElementById('unitsFilterStatus').value;
 
   const { data } = await sb.from('v_unit_status').select('*').order('unit_name');
-  let units = data || [];
+  const { data: priceRows } = await sb.from('units').select('id, price');
+  const askingPrice = {}; (priceRows||[]).forEach(x=>{ askingPrice[x.id] = x.price; });
+  // The view returns one row per contract, so a unit with past contracts
+  // appears several times — keep one row per unit, preferring the occupied one.
+  const byUnit = new Map();
+  (data||[]).forEach(u=>{
+    const prev = byUnit.get(u.unit_id);
+    if(!prev || (prev.occupancy!=='occupied' && u.occupancy==='occupied')) byUnit.set(u.unit_id, u);
+  });
+  let units = [...byUnit.values()].sort((a,b)=>(a.unit_name||'').localeCompare(b.unit_name||'', undefined, {numeric:true}));
   if(locFilter) units = units.filter(u=>u.location_id===locFilter);
   if(bldFilter) units = units.filter(u=>u.building_id===bldFilter);
   if(statusFilter) units = units.filter(u=>u.occupancy===statusFilter);
@@ -1551,9 +1588,9 @@ async function loadUnitsTable(){
           <thead><tr><th>Unit</th><th>Asking Rent</th><th>Status</th><th>Renter</th><th>Ends</th><th></th></tr></thead>
           <tbody>
             ${rows.map(u=>`
-              <tr>
+              <tr id="unitRow-${u.unit_id}">
                 <td>${u.unit_name}</td>
-                <td>${fmtMoney(u.rent_amount || 0)}</td>
+                <td>${fmtMoney(u.occupancy==='occupied' && u.rent_amount ? u.rent_amount : (askingPrice[u.unit_id] || 0))}</td>
                 <td><span class="badge b-${u.occupancy}">${u.occupancy}</span></td>
                 <td>${u.renter_name||'—'}</td>
                 <td>${fmtDate(u.end_date)}</td>
