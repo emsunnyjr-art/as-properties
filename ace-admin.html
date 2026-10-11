@@ -436,7 +436,7 @@
     <div class="card">
       <p class="section-title">Rent schedule</p>
       <table>
-        <thead><tr><th>Period</th><th>Due</th><th>Amount</th><th>Paid</th><th>Status</th><th>Receipt</th><th></th></tr></thead>
+        <thead><tr><th>Period</th><th>Due</th><th>Amount</th><th>Paid</th><th>Balance</th><th>Status</th><th>Receipt</th><th></th></tr></thead>
         <tbody id="scheduleTable"></tbody>
       </table>
     </div>
@@ -794,7 +794,11 @@ function escalationLabel(c){
 function escalationDateText(c, iso){
   return (c.rent_period||'monthly')==='monthly' ? fmtMonthYear(iso) : fmtDate(iso);
 }
-function todayISO(){ return new Date().toISOString().slice(0,10); }
+// "Today" in Philippine time (not the UTC date, which is a day behind until 8am)
+function manilaToday(){ return new Intl.DateTimeFormat('en-CA', { timeZone:'Asia/Manila' }).format(new Date()); }
+function todayISO(){ return manilaToday(); }
+function addDaysISO(iso, n){ const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0,10); }
+function peso(n){ return fmtMoney(n); }
 // Rent in effect today (for the Contracts table)
 function currentEscalatedRent(c){
   const st = escalationSteps(c, todayISO());
@@ -1203,7 +1207,7 @@ function renderDrilldown(title, rows){
 
 async function drilldownMonth(monthStr, group){
   const d = new Date(monthStr + 'T00:00:00');
-  const nextMonth = new Date(d.getFullYear(), d.getMonth()+1, 1).toISOString().slice(0,10);
+  const nextMonth = `${d.getMonth()===11 ? d.getFullYear()+1 : d.getFullYear()}-${String((d.getMonth()+1)%12+1).padStart(2,'0')}-01`;
   let q = sb.from('v_payment_detail').select('*').gte('period_start', monthStr).lt('period_start', nextMonth);
   q = group === 'paid' ? q.eq('status','paid') : q.in('status', ['pending','partial','overdue']);
   const { data } = await q.order('renter_name');
@@ -1227,17 +1231,13 @@ async function ackReminder(id){
 // This flips rent_payments.status to 'paid', which a DB trigger uses to
 // auto-clear this reminder — no separate "hide" step needed.
 async function markReminderPaid(rentPaymentId){
-  const { data: rp, error: selErr } = await sb.from('rent_payments').select('amount_due').eq('id', rentPaymentId).single();
-  if(selErr || !rp){ alert('Could not mark paid: ' + (selErr ? selErr.message : 'payment not found')); return; }
-  const { error: updErr } = await sb.from('rent_payments').update({
-    amount_paid: rp.amount_due,
-    paid_date: new Date().toISOString().slice(0,10)
-  }).eq('id', rentPaymentId);
-  if(updErr){ alert('Could not mark paid: ' + updErr.message); return; }
-  // Clear this payment's reminder(s) directly so the row disappears right away
-  await sb.from('reminders_log')
-    .update({ acknowledged:true, acknowledged_at:new Date().toISOString() })
-    .eq('rent_payment_id', rentPaymentId).eq('acknowledged', false);
+  const { data: rp, error: selErr } = await sb.from('rent_payments').select('amount_due, amount_paid, period_start, period_end').eq('id', rentPaymentId).single();
+  if(selErr || !rp){ alert('Could not load this payment: ' + (selErr ? selErr.message : 'not found')); return; }
+  const remaining = Number(rp.amount_due) - Number(rp.amount_paid);
+  if(remaining <= 0){ alert('Nothing is owing on this period.'); loadDashboard(); return; }
+  if(!confirm(`Record ${peso(remaining)} received today (${fmtDate(manilaToday())}) as the rest of this period's rent?`)) return;
+  const { data, error } = await sb.rpc('record_payment', { p_rent_payment_id: rentPaymentId, p_amount: remaining, p_received_date: manilaToday() });
+  if(error){ alert('Could not record the payment: ' + error.message); return; }
   loadDashboard();
 }
 
@@ -1615,7 +1615,8 @@ async function addUtility(unitId){
 }
 
 async function markUtilityPaid(utilId, unitId){
-  await sb.from('utilities').update({ status:'paid', paid_date: new Date().toISOString().slice(0,10) }).eq('id', utilId);
+  const { error } = await sb.rpc('record_itemized_payment', { p_utility_ids: [utilId], p_received_date: manilaToday() });
+  if(error){ alert('Could not record the payment: ' + error.message); return; }
   showUnitDetail(unitId);
 }
 
@@ -2514,8 +2515,7 @@ async function saveContract(){
       .select('id, unit_id').in('unit_id', unitIds).eq('status','active');
     const distinctActiveIds = [...new Set((existingActiveRows||[]).map(r=>r.id))];
     if(distinctActiveIds.length > 0){
-      const newStart = new Date(start_date + 'T00:00:00');
-      const dayBefore = new Date(newStart.getTime() - 86400000).toISOString().slice(0,10);
+      const dayBefore = addDaysISO(start_date, -1);
       const plural = distinctActiveIds.length > 1 ? 'contracts' : 'contract';
       if(!confirm(`${distinctActiveIds.length} existing active ${plural} on the selected unit(s) will be closed out (end date set to ${dayBefore}) and this new one will become current. Continue?`)) return;
       await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore }).in('id', distinctActiveIds);
@@ -2769,7 +2769,7 @@ async function loadContractsTable(){
 
 async function cancelContract(id){
   if(!confirm('Cancel this contract? End date will be set to today.')) return;
-  await sb.from('contracts').update({ status:'cancelled', end_date: new Date().toISOString().slice(0,10) }).eq('id', id);
+  await sb.from('contracts').update({ status:'cancelled', end_date: manilaToday() }).eq('id', id);
   loadContractsTable(); loadUnitsTable(); loadDashboard();
 }
 
@@ -3070,7 +3070,9 @@ async function loadItemizedBill(){
       </table>
       <p style="font-size:20px;font-weight:700;margin:12px 0;">Total: <span id="itemizedTotal"></span></p>
       <div class="row">
-        <div><label>Date collected</label><input id="itemizedDate" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Date received</label><input id="itemizedDate" type="date" value="${manilaToday()}" max="${manilaToday()}"></div>
+        <div><label>Paid through</label><select id="itemizedMethod"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="maya">Maya</option><option value="bank">Bank transfer</option><option value="other">Other</option></select></div>
+        <div><label>Reference no. (optional)</label><input id="itemizedRef" placeholder="GCash / bank reference"></div>
         <div><label>Receipt / screenshot (optional, attached to rent line items)</label><input id="itemizedReceipt" type="file" accept=".pdf,image/*"></div>
       </div>
       <button class="btn" onclick="collectItemizedBill('${contractId}')">Collect Payment</button>
@@ -3107,73 +3109,154 @@ async function sendItemizedBill(contractId){
 }
 
 async function collectItemizedBill(contractId){
-  const paid_date = document.getElementById('itemizedDate').value;
+  const received = document.getElementById('itemizedDate').value;
   const checked = itemizedBillItems.filter((it,i)=>document.getElementById(`billItem${i}`).checked);
   if(checked.length === 0) return alert('Select at least one item to collect.');
+  if(!received) return alert('Enter the date the money was received.');
+  const total = checked.reduce((n,it)=>n+it.amount, 0);
+  if(!confirm(`Record ${peso(total)} received on ${fmtDate(received)} for ${checked.length} item(s)?`)) return;
 
   let receiptPath = null, receiptName = null;
   const file = document.getElementById('itemizedReceipt').files[0];
   if(file){
     const path = `payments/${contractId}/${Date.now()}-${file.name}`;
     const { error: upErr } = await sb.storage.from('contract-files').upload(path, file);
-    if(upErr){ alert('Receipt upload failed: ' + upErr.message); }
+    if(upErr){ if(!confirm('The receipt image could not be uploaded (' + upErr.message + '). Record the payment without it?')) return; }
     else { receiptPath = path; receiptName = file.name; }
   }
 
-  for(const it of checked){
-    if(it.kind === 'rent'){
-      const update = { paid_date };
-      const { data: current } = await sb.from('rent_payments').select('amount_due').eq('id', it.id).single();
-      update.amount_paid = current.amount_due;
-      if(receiptPath){ update.receipt_path = receiptPath; update.receipt_name = receiptName; }
-      await sb.from('rent_payments').update(update).eq('id', it.id);
-    } else {
-      await sb.from('utilities').update({ status:'paid', paid_date }).eq('id', it.id);
-    }
-  }
-
+  // One call, all-or-nothing: either every selected line is recorded or none is.
+  const { data, error } = await sb.rpc('record_itemized_payment', {
+    p_rent_payment_ids: checked.filter(it=>it.kind==='rent').map(it=>it.id),
+    p_utility_ids: checked.filter(it=>it.kind==='utility').map(it=>it.id),
+    p_received_date: received,
+    p_method: document.getElementById('itemizedMethod').value,
+    p_reference: document.getElementById('itemizedRef').value,
+    p_receipt_path: receiptPath, p_receipt_name: receiptName
+  });
+  if(error){ alert('Nothing was saved. ' + error.message); return; }
+  alert(`${peso(data.total)} recorded across ${data.lines} item(s).`);
   loadItemizedBill(); loadPaymentSchedule(); loadDashboard();
 }
 
 async function loadPaymentSchedule(){
   const contractId = document.getElementById('payContractSelect').value;
   if(!contractId){ document.getElementById('scheduleTable').innerHTML=''; return; }
-  const { data } = await sb.from('rent_payments').select('*').eq('contract_id', contractId).order('due_date');
-  document.getElementById('scheduleTable').innerHTML = (data||[]).map(p=>`
+  const { data, error } = await sb.from('rent_payments').select('*').eq('contract_id', contractId).order('due_date');
+  if(error){ document.getElementById('scheduleTable').innerHTML = `<tr><td colspan="8" class="muted">Could not load the schedule (${error.message}). Please refresh and try again.</td></tr>`; return; }
+  document.getElementById('scheduleTable').innerHTML = (data||[]).map(p=>{
+    const remaining = Math.max(Number(p.amount_due) - Number(p.amount_paid), 0);
+    return `
     <tr>
       <td>${fmtDate(p.period_start)} – ${fmtDate(p.period_end)}</td>
       <td>${fmtDate(p.due_date)}</td>
       <td>${fmtMoney(p.amount_due)}</td>
       <td>${fmtMoney(p.amount_paid)}</td>
+      <td>${remaining > 0 ? fmtMoney(remaining) : '—'}</td>
       <td><span class="badge b-${p.status}">${p.status}</span></td>
-      <td>${p.receipt_path ? `<button class="btn secondary small" onclick="viewStoredFile('${p.receipt_path}','Payment receipt')">🧾 View</button>` : '—'}</td>
-      <td>${p.status!=='paid' ? `<button class="btn small" onclick="startRecordPayment('${p.id}', ${p.amount_due})">Record payment</button>` : ''}</td>
+      <td>${p.receipt_path ? `<button class="btn secondary small" onclick="viewStoredFile('${p.receipt_path.replace(/'/g,"\\'")}','Payment receipt')">Receipt</button>` : '—'}</td>
+      <td>
+        ${remaining > 0 ? `<button class="btn small" onclick="startRecordPayment('${p.id}', ${remaining})">Record payment</button>` : ''}
+        <button class="btn secondary small" onclick="togglePaymentHistory('${p.id}')">History</button>
+      </td>
     </tr>
-  `).join('');
+    <tr id="payHist-${p.id}" style="display:none;"><td colspan="8" id="payHistBody-${p.id}"></td></tr>`;
+  }).join('') || '<tr><td colspan="8" class="muted">No rent periods yet.</td></tr>';
 }
 
-function startRecordPayment(id, amountDue){
+const PAY_METHOD_LABEL = { cash:'Cash', gcash:'GCash', maya:'Maya', bank:'Bank transfer', other:'Other' };
+
+async function togglePaymentHistory(id){
+  const row = document.getElementById('payHist-' + id);
+  if(row.style.display !== 'none'){ row.style.display = 'none'; return; }
+  row.style.display = 'table-row';
+  const body = document.getElementById('payHistBody-' + id);
+  body.innerHTML = '<span class="muted">Loading…</span>';
+  const { data, error } = await sb.from('payments').select('*').eq('rent_payment_id', id).order('created_at');
+  if(error){ body.innerHTML = `<span class="muted">Could not load the history (${error.message}).</span>`; return; }
+  const reversed = new Set((data||[]).filter(x=>x.reverses_payment_id).map(x=>x.reverses_payment_id));
+  if(!(data||[]).length){ body.innerHTML = '<span class="muted">No payments recorded for this period yet.</span>'; return; }
+  body.innerHTML = `
+    <table style="margin:4px 0;">
+      <thead><tr><th>Received</th><th>Amount</th><th>Type</th><th>Paid through</th><th>Reference</th><th>Recorded by</th><th>Note</th><th></th></tr></thead>
+      <tbody>${data.map(x=>{
+        const isRev = x.kind === 'reversal', wasRev = reversed.has(x.id);
+        const style = wasRev ? 'text-decoration:line-through;opacity:.6;' : (isRev ? 'color:var(--bad);' : '');
+        const kind = isRev ? 'Reversal' : (x.kind === 'opening' ? 'Carried over' : 'Payment');
+        return `<tr style="${style}">
+          <td>${fmtDate(x.received_date)}</td>
+          <td>${fmtMoney(x.amount)}</td>
+          <td>${kind}${wasRev ? ' (reversed)' : ''}</td>
+          <td>${PAY_METHOD_LABEL[x.method] || '—'}</td>
+          <td>${(x.reference||'—').replace(/</g,'&lt;')}</td>
+          <td>${(x.created_by_email||'—').replace(/</g,'&lt;')}<br><span class="muted" style="font-size:11px;">${new Date(x.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'})}</span></td>
+          <td>${(x.note||'').replace(/</g,'&lt;')}</td>
+          <td>${x.receipt_path ? `<button class="btn secondary small" onclick="viewStoredFile('${x.receipt_path.replace(/'/g,"\\'")}','Payment receipt')">Receipt</button>` : ''}
+              ${(!isRev && !wasRev) ? `<button class="btn danger small" onclick="reversePayment('${x.id}', ${x.amount}, '${id}')">Reverse</button>` : ''}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+}
+
+async function reversePayment(paymentId, amount, rentPaymentId){
+  const reason = prompt(`Reverse this ${peso(amount)} payment?\nThe original stays in the history. Reason (required):`);
+  if(reason === null) return;
+  if(!reason.trim()) return alert('A reason is required to reverse a payment.');
+  const { error } = await sb.rpc('reverse_payment', { p_payment_id: paymentId, p_reason: reason.trim(), p_date: manilaToday() });
+  if(error){ alert('Could not reverse: ' + error.message); return; }
+  await loadPaymentSchedule();
+  togglePaymentHistory(rentPaymentId);
+  loadItemizedBill(); loadDashboard();
+}
+
+function startRecordPayment(id, remaining){
   document.getElementById('paymentFormPanel').innerHTML = `
     <div class="card" style="border-color:var(--accent);">
-      <p class="section-title">Record payment</p>
+      <p class="section-title">Record payment <span class="muted">(balance of this period: ${fmtMoney(remaining)})</span></p>
       <div class="row">
-        <div><label>Amount paid</label><input id="payAmount" type="number" step="0.01" value="${amountDue}"></div>
-        <div><label>Date paid</label><input id="payDate" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Amount received now</label><input id="payAmount" type="number" step="0.01" min="0.01" max="${remaining}" value="${remaining}"></div>
+        <div><label>Date received</label><input id="payDate" type="date" value="${manilaToday()}" max="${manilaToday()}"></div>
+        <div><label>Paid through</label><select id="payMethod"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="maya">Maya</option><option value="bank">Bank transfer</option><option value="other">Other</option></select></div>
+        <div><label>Reference no. (optional)</label><input id="payRef" placeholder="GCash / bank reference"></div>
+        <div><label>Note (optional)</label><input id="payNote"></div>
         <div><label>Receipt / screenshot (optional)</label><input id="payReceipt" type="file" accept=".pdf,image/*"></div>
       </div>
-      <button class="btn" onclick="savePayment('${id}')">Save</button>
+      <p class="muted">A part-payment is fine: enter what was actually received. The rest stays as the balance.</p>
+      <button class="btn" id="paySaveBtn" onclick="savePayment('${id}')">Save payment</button>
       <button class="btn secondary" onclick="document.getElementById('paymentFormPanel').innerHTML=''">Cancel</button>
     </div>`;
   document.getElementById('paymentFormPanel').scrollIntoView({behavior:'smooth'});
 }
 
 async function savePayment(id){
-  const amount_paid = parseFloat(document.getElementById('payAmount').value) || 0;
-  const paid_date = document.getElementById('payDate').value;
-  await sb.from('rent_payments').update({ amount_paid, paid_date }).eq('id', id);
-  await uploadFileToTable('payReceipt', 'payments', 'rent_payments', 'id', id, 'receipt_path', 'receipt_name');
-  document.getElementById('paymentFormPanel').innerHTML = '';
-  loadPaymentSchedule(); loadDashboard();
+  const amount = parseFloat(document.getElementById('payAmount').value);
+  const received = document.getElementById('payDate').value;
+  if(!(amount > 0)) return alert('Enter the amount received (more than zero).');
+  if(!received) return alert('Enter the date the money was received.');
+  const btn = document.getElementById('paySaveBtn'); btn.disabled = true;
+
+  let receiptPath = null, receiptName = null;
+  const file = document.getElementById('payReceipt').files[0];
+  if(file){
+    const path = `payments/${id}/${Date.now()}-${file.name}`;
+    const { error: upErr } = await sb.storage.from('contract-files').upload(path, file);
+    if(upErr){
+      if(!confirm('The receipt image could not be uploaded (' + upErr.message + '). Record the payment without it?')){ btn.disabled = false; return; }
+    } else { receiptPath = path; receiptName = file.name; }
+  }
+
+  const { data, error } = await sb.rpc('record_payment', {
+    p_rent_payment_id: id, p_amount: amount, p_received_date: received,
+    p_method: document.getElementById('payMethod').value,
+    p_reference: document.getElementById('payRef').value,
+    p_note: document.getElementById('payNote').value,
+    p_receipt_path: receiptPath, p_receipt_name: receiptName
+  });
+  btn.disabled = false;
+  if(error){ alert('Not saved. ' + error.message); return; }
+  document.getElementById('paymentFormPanel').innerHTML =
+    `<div class="card" style="border-color:var(--good);"><strong>${peso(data.applied)} recorded</strong> for ${fmtDate(data.period_start)} – ${fmtDate(data.period_end)}. ${data.remaining > 0.004 ? peso(data.remaining) + ' remains.' : 'This period is now paid in full.'}</div>`;
+  loadPaymentSchedule(); loadItemizedBill(); loadDashboard();
 }
 
 // ---------- Login gate (real Supabase Auth — accounts you create) ----------
