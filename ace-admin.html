@@ -46,6 +46,7 @@
   .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;}
   .b-active,.b-paid,.b-occupied{background:rgba(62,207,142,.15);color:var(--good);}
   .b-pending,.b-vacant{background:rgba(143,163,179,.15);color:var(--muted);}
+  .b-waived{background:rgba(150,150,150,.18);color:var(--muted,#999);}
   .b-overdue,.b-expired,.b-cancelled{background:rgba(239,91,91,.15);color:var(--bad);}
   .b-partial,.b-expiring{background:rgba(242,184,75,.15);color:var(--warn);}
   a.action{color:var(--accent);text-decoration:none;font-size:13px;margin-right:10px;}
@@ -942,7 +943,7 @@ let balanceContextMap = {};
 async function loadBalanceSummary(){
   const body = document.getElementById('balanceTable');
   const totalEl = document.getElementById('balanceTotalLabel');
-  const { data, error } = await sb.from('v_contract_balance').select('*').eq('status','active').order('balance', { ascending:false });
+  const { data, error } = await sb.from('v_contract_balance').select('*').or('status.eq.active,and(status.eq.cancelled,recover_dues.eq.true)').order('balance', { ascending:false });
   if(error){
     totalEl.textContent = '';
     body.innerHTML = `<tr><td colspan="6" class="muted">Balance summary isn't available yet — run ace-feature-update-21.sql in Supabase, then refresh. (${error.message})</td></tr>`;
@@ -965,7 +966,7 @@ async function loadBalanceSummary(){
     balanceContextMap[r.contract_id] = { amount: r.balance, renterName: r.renter_name, unitName: r.unit_names };
     return `
       <tr>
-        <td><strong>${r.renter_name}</strong>${r.past_end_date ? `<br><span class="badge b-expiring" title="No newer contract is on file, so the same terms continue">Lease ended ${fmtDate(r.end_date)} · continuing</span>` : ''}</td>
+        <td><strong>${r.renter_name}</strong>${r.status==='cancelled' ? '<br><span class="badge b-cancelled">cancelled · recovering</span>' : ''}${r.past_end_date ? `<br><span class="badge b-expiring" title="No newer contract is on file, so the same terms continue">Lease ended ${fmtDate(r.end_date)} · continuing</span>` : ''}</td>
         <td>${r.unit_names || '—'}</td>
         <td>${n} ${label}</td>
         <td style="color:var(--bad);font-weight:700;">${fmtMoney(r.balance)}</td>
@@ -2518,7 +2519,7 @@ async function saveContract(){
       const dayBefore = addDaysISO(start_date, -1);
       const plural = distinctActiveIds.length > 1 ? 'contracts' : 'contract';
       if(!confirm(`${distinctActiveIds.length} existing active ${plural} on the selected unit(s) will be closed out (end date set to ${dayBefore}) and this new one will become current. Continue?`)) return;
-      await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore }).in('id', distinctActiveIds);
+      await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore, recover_dues: true }).in('id', distinctActiveIds);
     }
 
     const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
@@ -2642,7 +2643,7 @@ function contractRowHtml(c, unitNames, opts){
       <td>${escalationActive(c) ? `${fmtMoney(currentEscalatedRent(c))}<br><span class="muted" style="font-size:11px;" title="Starting rent ${fmtMoney(c.rent_amount)}">${escalationLabel(c)}</span>` : fmtMoney(c.rent_amount)}</td>
       <td>${fmtDate(c.start_date)}</td>
       <td>${fmtDate(c.end_date)}</td>
-      <td><span class="badge b-${c.status}">${c.status}</span>${opts.balance?.past_end_date ? '<br><span class="badge b-expiring" title="No newer contract is on file, so the same terms continue">past end · continuing</span>' : ''}</td>
+      <td><span class="badge b-${c.status}">${c.status}</span>${c.status==='cancelled' && c.recover_dues ? '<br><span class="badge b-expiring">recovering dues</span>' : ''}${opts.balance?.past_end_date ? '<br><span class="badge b-expiring" title="No newer contract is on file, so the same terms continue">past end · continuing</span>' : ''}</td>
       <td>${balanceCellHtml(opts.balance, c.status==='active')}</td>
       <td>
         ${opts.historyBtn||''}
@@ -2656,6 +2657,9 @@ function contractRowHtml(c, unitNames, opts){
           ? `<button class="btn small" style="background:var(--good);" onclick="viewSignature('${c.id}')">✅ Signed</button>`
           : `<button class="btn secondary small" onclick="sendForSignature('${c.id}')">✍️ Send for signature</button>`}
         ${c.status==='active' ? `<button class="btn danger small" onclick="cancelContract('${c.id}')">Cancel</button>` : ''}
+        ${c.status==='cancelled' ? (c.recover_dues
+            ? `<button class="btn secondary small" onclick="setRecoverDues('${c.id}', false)" title="Remove its unpaid rent from every list">Write off dues</button>`
+            : `<button class="btn secondary small" onclick="setRecoverDues('${c.id}', true)" title="Put its unpaid rent back on the overdue list">Recover dues</button>`) : ''}
       </td>
     </tr>`;
 }
@@ -2769,8 +2773,20 @@ async function loadContractsTable(){
 
 async function cancelContract(id){
   if(!confirm('Cancel this contract? End date will be set to today.')) return;
-  await sb.from('contracts').update({ status:'cancelled', end_date: manilaToday() }).eq('id', id);
+  const recover = confirm('Do you still want to collect the rent that is unpaid on this contract?\n\nOK = YES, keep the unpaid rent on the overdue list\nCancel = NO, write it off and remove it from all lists\n\n(You can change this later with the Recover dues / Write off dues button.)');
+  const { error } = await sb.from('contracts').update({ status:'cancelled', end_date: manilaToday(), recover_dues: recover }).eq('id', id);
+  if(error){ alert('Could not cancel: ' + error.message + '\n\nIf it mentions recover_dues, run ace-feature-update-26.sql first.'); return; }
   loadContractsTable(); loadUnitsTable(); loadDashboard();
+}
+
+async function setRecoverDues(id, recover){
+  const msg = recover
+    ? 'Put this cancelled contract\'s unpaid rent back on the overdue list so you can collect it?'
+    : 'Write off this contract\'s unpaid rent? It will be removed from the overdue list, balances and reminders. Payments already received stay on record.';
+  if(!confirm(msg)) return;
+  const { error } = await sb.from('contracts').update({ recover_dues: recover }).eq('id', id);
+  if(error){ alert('Could not change it: ' + error.message); return; }
+  loadContractsTable(); loadDashboard();
 }
 
 async function printContract(id){
