@@ -962,32 +962,35 @@ function onAdvPeriodsInput(which){
   if(n > 0 && rent > 0 && !(parseFloat(amt.value) > 0)) amt.value = Math.round(rent*n*100)/100;
 }
 function coverageThrough(startISO, count, rentPeriod){
-  // last day covered when `count` periods are paid from `startISO`
+  // Last day covered when `count` periods are paid from `startISO`, following
+  // the contract's own start date (Jan 15 + 1 month -> Feb 14).
   if(!startISO || !(count > 0)) return null;
   if(rentPeriod === 'daily') return addDaysISO(startISO, count - 1);
   if(rentPeriod === 'annual') return addDaysISO(addMonthsISO(startISO, count*12), -1);
-  const d = new Date(startISO + 'T00:00:00');
-  const last = new Date(d.getFullYear(), d.getMonth() + count, 0);       // end of the count-th calendar month
-  return `${last.getFullYear()}-${String(last.getMonth()+1).padStart(2,'0')}-${String(last.getDate()).padStart(2,'0')}`;
+  return addDaysISO(addMonthsISO(startISO, count), -1);
 }
 function nextDayISO(iso){ return addDaysISO(iso, 1); }
 function updateAdvDepHint(){
   const el = document.getElementById('advDepHint'); if(!el) return;
-  const start = document.getElementById('cStart').value;
   const per = document.getElementById('cRentPeriod').value;
   const a = parseInt(document.getElementById('cAdvancePeriods').value) || 0;
   const d = parseInt(document.getElementById('cDepositPeriods').value) || 0;
+  let start = document.getElementById('cStart').value;
+  let basis = 'contract start date';
+  if(!start){
+    // no contract dates yet: use the calendar month of the date received (month start to month end)
+    const first = document.getElementById('cAdvanceDate').value || document.getElementById('cDepositDate').value;
+    if(first){ start = first.slice(0,7) + '-01'; basis = 'calendar month (no contract start date yet)'; }
+  }
   const parts = [];
   if(start && a > 0){
-    const end = coverageThrough(start, a, per);
-    parts.push(`Advance marks rent paid ${fmtDate(start)} to ${fmtDate(end)}`);
+    parts.push(`Advance marks rent paid ${fmtDate(start)} to ${fmtDate(coverageThrough(start, a, per))}`);
   }
   if(start && d > 0){
     const from = a > 0 ? nextDayISO(coverageThrough(start, a, per)) : start;
-    const end = coverageThrough(from, d, per);
-    parts.push(`Deposit marks rent paid ${fmtDate(from)} to ${fmtDate(end)}`);
+    parts.push(`Deposit marks rent paid ${fmtDate(from)} to ${fmtDate(coverageThrough(from, d, per))}`);
   }
-  el.textContent = parts.length ? parts.join(' · ') + '. They are recorded as paid on the dates received.' : 'Set "covers" above to automatically mark the first rent periods as paid. Leave 0 to keep the amount on file only.';
+  el.textContent = parts.length ? parts.join(' · ') + ` (based on the ${basis}). Recorded as paid on the dates received.` : 'Set "covers" above to automatically mark the first rent periods as paid. Leave 0 to keep the amount on file only.';
 }
 
 // ---------- DASHBOARD ----------
