@@ -328,12 +328,17 @@
           </select>
         </div>
         <div><label id="cRentLabel">Monthly rent</label><input id="cRent" type="number" step="0.01" oninput="onEscalationChange()"></div>
-        <div><label>Advance</label><input id="cAdvance" type="number" step="0.01" value="0"></div>
-        <div><label>Deposit</label><input id="cDeposit" type="number" step="0.01" value="0"></div>
-        <div><label>Start date</label><input id="cStart" type="date" onchange="onEscalationChange()"></div>
+        <div><label>Advance amount</label><input id="cAdvance" type="number" step="0.01" value="0"></div>
+        <div><label>Advance date received</label><input id="cAdvanceDate" type="date" oninput="updateAdvDepHint()"></div>
+        <div><label>Advance covers (<span class="perWord">months</span>)</label><input id="cAdvancePeriods" type="number" min="0" step="1" value="0" oninput="onAdvPeriodsInput('adv'); updateAdvDepHint()"></div>
+        <div><label>Deposit amount</label><input id="cDeposit" type="number" step="0.01" value="0"></div>
+        <div><label>Deposit date received</label><input id="cDepositDate" type="date" oninput="updateAdvDepHint()"></div>
+        <div><label>Deposit covers (<span class="perWord">months</span>)</label><input id="cDepositPeriods" type="number" min="0" step="1" value="0" oninput="onAdvPeriodsInput('dep'); updateAdvDepHint()"></div>
+        <div><label>Start date</label><input id="cStart" type="date" onchange="onEscalationChange(); updateAdvDepHint()"></div>
         <div><label id="cTermLabel">Term (months)</label><input id="cTerm" type="number" value="12" oninput="onEscalationChange()"></div>
         <div id="cDueDayField"><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="28"></div>
       </div>
+      <p class="muted" id="advDepHint" style="margin:2px 0 8px 0;"></p>
 
       <div class="row" style="margin-top:8px;">
         <div>
@@ -922,6 +927,67 @@ function onRentPeriodChange(){
   // Due-day-of-month only makes sense for monthly billing
   document.getElementById('cDueDayField').classList.toggle('hidden', period !== 'monthly');
   if(document.getElementById('cEscPreview')) onEscalationChange();
+  document.querySelectorAll('.perWord').forEach(e=>e.textContent = ({monthly:'months', daily:'days', annual:'years'})[period]);
+  updateAdvDepHint();
+}
+
+// ----- advance / deposit coverage -----
+let advDepLoaded = null;
+function advDepChanged(p){
+  const o = advDepLoaded || {};
+  return (p.advance_periods>0 || p.deposit_periods>0) &&
+    (o.advance_date!==p.advance_date || o.advance_periods!==p.advance_periods || o.deposit_date!==p.deposit_date || o.deposit_periods!==p.deposit_periods);
+}
+async function applyAdvDep(contractId){
+  const { data, error } = await sb.rpc('apply_advance_deposit', { p_contract_id: contractId });
+  if(error){ alert('The contract was saved, but the advance/deposit could not be marked as paid: ' + error.message + '\n\nIf it says the function does not exist, run ace-feature-update-27.sql.'); return; }
+  if(data && data.recorded > 0){
+    const bits = [];
+    if(data.advance_through) bits.push('advance paid through ' + fmtDate(data.advance_through));
+    if(data.deposit_through) bits.push('deposit paid through ' + fmtDate(data.deposit_through));
+    alert(`Marked ${data.recorded} rent period${data.recorded===1?'':'s'} as paid (${fmtMoney(data.total)}): ${bits.join(', ')}.`);
+  }
+}
+function advDepCoverText(c, which){
+  const n = Number(which==='advance' ? c.advance_periods : c.deposit_periods) || 0;
+  const dt = which==='advance' ? c.advance_date : c.deposit_date;
+  if(!(n > 0)) return '';
+  const word = ({monthly:'month', daily:'day', annual:'year'})[c.rent_period || 'monthly'];
+  return ` (covering ${n} ${word}${n===1?'':'s'} of rent${dt ? ', received ' + fmtDate(dt) : ''})`;
+}
+function onAdvPeriodsInput(which){
+  const rent = parseFloat(document.getElementById('cRent').value) || 0;
+  const n = parseInt(document.getElementById(which==='adv' ? 'cAdvancePeriods' : 'cDepositPeriods').value) || 0;
+  const amt = document.getElementById(which==='adv' ? 'cAdvance' : 'cDeposit');
+  if(n > 0 && rent > 0 && !(parseFloat(amt.value) > 0)) amt.value = Math.round(rent*n*100)/100;
+}
+function coverageThrough(startISO, count, rentPeriod){
+  // last day covered when `count` periods are paid from `startISO`
+  if(!startISO || !(count > 0)) return null;
+  if(rentPeriod === 'daily') return addDaysISO(startISO, count - 1);
+  if(rentPeriod === 'annual') return addDaysISO(addMonthsISO(startISO, count*12), -1);
+  const d = new Date(startISO + 'T00:00:00');
+  const last = new Date(d.getFullYear(), d.getMonth() + count, 0);       // end of the count-th calendar month
+  return `${last.getFullYear()}-${String(last.getMonth()+1).padStart(2,'0')}-${String(last.getDate()).padStart(2,'0')}`;
+}
+function nextDayISO(iso){ return addDaysISO(iso, 1); }
+function updateAdvDepHint(){
+  const el = document.getElementById('advDepHint'); if(!el) return;
+  const start = document.getElementById('cStart').value;
+  const per = document.getElementById('cRentPeriod').value;
+  const a = parseInt(document.getElementById('cAdvancePeriods').value) || 0;
+  const d = parseInt(document.getElementById('cDepositPeriods').value) || 0;
+  const parts = [];
+  if(start && a > 0){
+    const end = coverageThrough(start, a, per);
+    parts.push(`Advance marks rent paid ${fmtDate(start)} to ${fmtDate(end)}`);
+  }
+  if(start && d > 0){
+    const from = a > 0 ? nextDayISO(coverageThrough(start, a, per)) : start;
+    const end = coverageThrough(from, d, per);
+    parts.push(`Deposit marks rent paid ${fmtDate(from)} to ${fmtDate(end)}`);
+  }
+  el.textContent = parts.length ? parts.join(' · ') + '. They are recorded as paid on the dates received.' : 'Set "covers" above to automatically mark the first rent periods as paid. Leave 0 to keep the amount on file only.';
 }
 
 // ---------- DASHBOARD ----------
@@ -2318,6 +2384,11 @@ async function startEditContract(id){
   document.getElementById('cRent').value = c.rent_amount;
   document.getElementById('cAdvance').value = c.advance;
   document.getElementById('cDeposit').value = c.deposit;
+  document.getElementById('cAdvanceDate').value = c.advance_date || '';
+  document.getElementById('cAdvancePeriods').value = c.advance_periods || 0;
+  document.getElementById('cDepositDate').value = c.deposit_date || '';
+  document.getElementById('cDepositPeriods').value = c.deposit_periods || 0;
+  advDepLoaded = { advance_date: c.advance_date||null, advance_periods: c.advance_periods||0, deposit_date: c.deposit_date||null, deposit_periods: c.deposit_periods||0 };
   document.getElementById('cStart').value = c.start_date;
   document.getElementById('cTerm').value =
     c.rent_period === 'daily' ? (c.term_days||30) :
@@ -2356,6 +2427,10 @@ function cancelEditContract(){
   document.getElementById('cDepositProof').value = '';
   document.getElementById('cDepositProofCurrent').textContent = '';
   resetEscalationForm();
+  advDepLoaded = null;
+  ['cAdvanceDate','cDepositDate'].forEach(i=>document.getElementById(i).value='');
+  ['cAdvancePeriods','cDepositPeriods','cAdvance','cDeposit'].forEach(i=>document.getElementById(i).value=0);
+  updateAdvDepHint();
 
   // Editing narrows Location/Building to that contract's unit(s) — reset
   // back to "All" so every unit is selectable again for the next contract.
@@ -2497,6 +2572,10 @@ async function saveContract(){
     rent_amount: parseFloat(document.getElementById('cRent').value) || 0,
     advance: parseFloat(document.getElementById('cAdvance').value) || 0,
     deposit: parseFloat(document.getElementById('cDeposit').value) || 0,
+    advance_date: document.getElementById('cAdvanceDate').value || null,
+    advance_periods: parseInt(document.getElementById('cAdvancePeriods').value) || 0,
+    deposit_date: document.getElementById('cDepositDate').value || null,
+    deposit_periods: parseInt(document.getElementById('cDepositPeriods').value) || 0,
     start_date,
     rent_period: rentPeriod,
     term_months: rentPeriod === 'monthly' ? termValue : null,
@@ -2508,6 +2587,10 @@ async function saveContract(){
     ...readEscalationFromForm()
   };
 
+  if(payload.advance_periods > 0 && !payload.advance_date) return alert('Enter the date the advance was received.');
+  if(payload.deposit_periods > 0 && !payload.deposit_date) return alert('Enter the date the deposit was received.');
+  if((payload.advance_date && payload.advance_date > manilaToday()) || (payload.deposit_date && payload.deposit_date > manilaToday())) return alert('The advance / deposit date cannot be in the future.');
+
   const { data: unitRows } = await sb.from('units').select('id, unit_name').in('id', unitIds);
   const unitNamesJoined = (unitRows||[]).map(u=>u.unit_name).join(', ');
 
@@ -2517,6 +2600,7 @@ async function saveContract(){
     await sb.rpc('regenerate_schedule_from_today', { p_contract_id: editingContractId });
     // re-price any period with nothing paid yet so the new escalation shows in rent due
     await sb.rpc('apply_escalation_to_unpaid', { p_contract_id: editingContractId });
+    if(advDepChanged(payload)) await applyAdvDep(editingContractId);
     await uploadSignedFileIfSelected(editingContractId);
     await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', editingContractId, 'advance_proof_path', 'advance_proof_name');
     await uploadFileToTable('cDepositProof', 'contracts', 'contracts', 'id', editingContractId, 'deposit_proof_path', 'deposit_proof_name');
@@ -2549,6 +2633,7 @@ async function saveContract(){
 
     const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
     if(error) return alert('Error: ' + error.message);
+    await applyAdvDep(created.id);
     await uploadSignedFileIfSelected(created.id);
     await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', created.id, 'advance_proof_path', 'advance_proof_name');
     await uploadFileToTable('cDepositProof', 'contracts', 'contracts', 'id', created.id, 'deposit_proof_path', 'deposit_proof_name');
@@ -2910,7 +2995,7 @@ async function printContract(id){
     ${escalationActive(c) && c.escalation_in_contract !== false ? `<p class="clause">${isDaily ? '4.2' : '4.3'}. ${escalationClauseHtml(c)}</p>` : ''}
 
     <h3>5. Deposit and Advance Rent</h3>
-    <p class="clause">5.1. The Lessee shall pay an advance of ${fmtMoney(c.advance)} and a security deposit of ${fmtMoney(c.deposit)}, for a total initial payment of ${fmtMoney(totalInitial)}.</p>
+    <p class="clause">5.1. The Lessee shall pay an advance of ${fmtMoney(c.advance)}${advDepCoverText(c,'advance')} and a security deposit of ${fmtMoney(c.deposit)}${advDepCoverText(c,'deposit')}, for a total initial payment of ${fmtMoney(totalInitial)}.</p>
 
     ${(c.terms_and_conditions||'').split(/\n\s*\n/).map(block=>{
       const lines = block.split('\n');
