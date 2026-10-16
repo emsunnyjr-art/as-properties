@@ -424,6 +424,31 @@
       </table>
     </div>
 
+    <div class="card" id="bulkCard">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <p class="section-title" style="margin:0;">Bulk payment update</p>
+        <button class="btn small" id="bulkToggleBtn" onclick="toggleBulkPayment()">⚡ Bulk payment update</button>
+      </div>
+      <div id="bulkBody" class="hidden">
+        <p class="muted">Mark many unpaid rent periods as received in one click. Pick who and how far, review the list, untick anything not paid, then confirm. Every line is saved in the payment history (all or nothing) and can be reversed.</p>
+        <div class="row">
+          <div><label>Building</label><select id="bulkBuilding" onchange="bulkPreview()"><option value="">All buildings</option></select></div>
+          <div><label>Renter (optional search)</label><input id="bulkSearch" placeholder="name or unit" oninput="bulkRender()"></div>
+          <div><label>Paid up to (month)</label><input id="bulkThrough" type="month" onchange="bulkPreview()"></div>
+        </div>
+        <div class="row">
+          <div><label>Date received</label><input id="bulkDate" type="date"></div>
+          <div><label>Paid through</label><select id="bulkMethod"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="maya">Maya</option><option value="bank">Bank transfer</option><option value="other">Other</option></select></div>
+          <div><label>Reference / note (optional)</label><input id="bulkRef" placeholder="e.g. bulk cash collection"></div>
+        </div>
+        <div id="bulkList" style="margin-top:10px;"></div>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="btn" id="bulkSaveBtn" onclick="bulkSave()" disabled>Record payments</button>
+          <span id="bulkTotal" class="muted"></span>
+        </div>
+      </div>
+    </div>
+
     <div class="card">
       <p class="section-title">Select contract</p>
       <select id="payContractSelect" onchange="loadPaymentSchedule(); loadItemizedBill();"></select>
@@ -3153,6 +3178,105 @@ async function collectItemizedBill(contractId){
   if(error){ alert('Nothing was saved. ' + error.message); return; }
   alert(`${peso(data.total)} recorded across ${data.lines} item(s).`);
   loadItemizedBill(); loadPaymentSchedule(); loadDashboard();
+}
+
+// ---------- Bulk payment update ----------
+let bulkRows = [];
+function bulkEsc(t){ return String(t==null?'':t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function toggleBulkPayment(){
+  const body = document.getElementById('bulkBody');
+  const opening = body.classList.contains('hidden');
+  body.classList.toggle('hidden');
+  if(!opening) return;
+  const t = manilaToday();
+  document.getElementById('bulkThrough').value = t.slice(0,7);
+  document.getElementById('bulkDate').value = t;
+  document.getElementById('bulkDate').max = t;
+  const { data: b } = await sb.from('buildings').select('name').order('name');
+  const names = [...new Set((b||[]).map(x=>x.name).filter(Boolean))];
+  const sel = document.getElementById('bulkBuilding');
+  sel.innerHTML = '<option value="">All buildings</option>' + names.map(n=>`<option value="${bulkEsc(n)}">${bulkEsc(n)}</option>`).join('');
+  bulkPreview();
+}
+async function bulkPreview(){
+  const list = document.getElementById('bulkList');
+  const ym = document.getElementById('bulkThrough').value;
+  if(!ym){ list.innerHTML = '<p class="muted">Choose the month to pay up to.</p>'; return; }
+  list.innerHTML = '<p class="muted">Loading…</p>';
+  const [y,m] = ym.split('-').map(Number);
+  const endISO = `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
+  const bld = document.getElementById('bulkBuilding').value;
+  let all = [];
+  for(let from=0; from<20000; from+=1000){
+    let q = sb.from('v_payment_detail').select('*').in('status',['pending','partial','overdue']).lte('period_start', endISO);
+    if(bld) q = q.eq('building_name', bld);
+    const { data, error } = await q.order('renter_name').order('period_start').range(from, from+999);
+    if(error){ list.innerHTML = `<p class="muted">Could not load: ${bulkEsc(error.message)}</p>`; return; }
+    all = all.concat(data||[]);
+    if(!data || data.length < 1000) break;
+  }
+  // only contracts that are active, or cancelled but still being recovered
+  const cids = [...new Set(all.map(r=>r.contract_id))];
+  const ok = new Set();
+  for(let i=0;i<cids.length;i+=200){
+    const { data: cs } = await sb.from('contracts').select('id,status,recover_dues').in('id', cids.slice(i,i+200));
+    (cs||[]).forEach(c=>{ if(c.status!=='cancelled' || c.recover_dues) ok.add(c.id); });
+  }
+  bulkRows = all.filter(r=>ok.has(r.contract_id) && Number(r.amount_due)-Number(r.amount_paid) > 0.004)
+                .map(r=>({ ...r, balance: Math.round((Number(r.amount_due)-Number(r.amount_paid))*100)/100, checked:true }));
+  bulkRender();
+}
+function bulkVisible(){
+  const term = (document.getElementById('bulkSearch').value||'').trim().toLowerCase();
+  return bulkRows.filter(r=>!term || `${r.renter_name} ${r.unit_name} ${r.building_name}`.toLowerCase().includes(term));
+}
+function bulkRender(){
+  const list = document.getElementById('bulkList');
+  const vis = bulkVisible();
+  if(!vis.length){ list.innerHTML = '<p class="muted">Nothing unpaid for this selection.</p>'; bulkTotals(); return; }
+  list.innerHTML = `<div style="max-height:380px;overflow:auto;"><table>
+    <thead><tr><th><input type="checkbox" id="bulkAll" checked onchange="bulkToggleAll(this.checked)"></th><th>Renter</th><th>Unit</th><th>Period</th><th>Balance</th></tr></thead>
+    <tbody>${vis.map(r=>`<tr>
+      <td><input type="checkbox" ${r.checked?'checked':''} onchange="bulkToggle('${r.payment_id}',this.checked)"></td>
+      <td>${bulkEsc(r.renter_name)}</td>
+      <td>${bulkEsc(r.unit_name||'—')}<br><span class="muted">${bulkEsc(r.building_name||'')}</span></td>
+      <td>${fmtDate(r.period_start)}</td>
+      <td>${fmtMoney(r.balance)}</td></tr>`).join('')}</tbody></table></div>`;
+  document.getElementById('bulkAll').checked = vis.every(r=>r.checked);
+  bulkTotals();
+}
+function bulkToggle(id, on){ const r = bulkRows.find(x=>x.payment_id===id); if(r) r.checked = on; document.getElementById('bulkAll').checked = bulkVisible().every(r=>r.checked); bulkTotals(); }
+function bulkToggleAll(on){ bulkVisible().forEach(r=>r.checked = on); bulkRender(); }
+function bulkSelected(){ return bulkVisible().filter(r=>r.checked); }
+function bulkTotals(){
+  const sel = bulkSelected();
+  const total = sel.reduce((s,r)=>s+r.balance,0);
+  document.getElementById('bulkTotal').textContent = sel.length ? `${sel.length} period${sel.length===1?'':'s'} · ${fmtMoney(total)}` : '';
+  const btn = document.getElementById('bulkSaveBtn');
+  btn.disabled = !sel.length;
+  btn.textContent = sel.length ? `Record ${sel.length} payment${sel.length===1?'':'s'} (${fmtMoney(total)})` : 'Record payments';
+}
+async function bulkSave(){
+  const sel = bulkSelected();
+  if(!sel.length) return;
+  const date = document.getElementById('bulkDate').value;
+  if(!date || date > manilaToday()){ alert('Choose a date received that is today or earlier.'); return; }
+  const total = sel.reduce((s,r)=>s+r.balance,0);
+  const renters = new Set(sel.map(r=>r.renter_name)).size;
+  if(!confirm(`Record ${sel.length} payment${sel.length===1?'':'s'} totalling ${fmtMoney(total)} from ${renters} renter${renters===1?'':'s'}, received ${fmtDate(date)}?\n\nEach one is marked paid in full. You can reverse any of them later.`)) return;
+  const btn = document.getElementById('bulkSaveBtn'); btn.disabled = true; btn.textContent = 'Saving…';
+  const { data, error } = await sb.rpc('record_itemized_payment', {
+    p_rent_payment_ids: sel.map(r=>r.payment_id),
+    p_received_date: date,
+    p_method: document.getElementById('bulkMethod').value,
+    p_reference: document.getElementById('bulkRef').value.trim() || 'Bulk payment update',
+    p_note: 'Bulk payment update'
+  });
+  if(error){ alert('Nothing was saved: ' + error.message); bulkPreview(); return; }
+  alert(`Recorded ${data?.lines ?? sel.length} payments, ${fmtMoney(data?.total ?? total)}.`);
+  await bulkPreview();
+  try{ loadPaymentSchedule(); }catch(e){}
+  try{ loadDashboard(); }catch(e){}
 }
 
 async function loadPaymentSchedule(){
