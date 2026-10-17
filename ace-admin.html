@@ -932,6 +932,7 @@ function onRentPeriodChange(){
 }
 
 // ----- advance / deposit coverage -----
+let editLoadedRent = 0, editLoadedEsc = '';
 let advDepLoaded = null;
 function advDepChanged(p){
   const o = advDepLoaded || {};
@@ -2408,6 +2409,8 @@ async function startEditContract(id){
   document.getElementById('cDepositProof').value = '';
   showCurrentFile('cDepositProofCurrent', c.deposit_proof_path, c.deposit_proof_name, 'Deposit payment proof', 'No proof uploaded yet.');
 
+  editLoadedRent = Number(c.rent_amount) || 0;
+  editLoadedEsc = JSON.stringify(readEscalationFromForm());
   document.querySelector('#tab-contracts').scrollIntoView({behavior:'smooth'});
 }
 
@@ -2602,7 +2605,11 @@ async function saveContract(){
     if(error) return alert('Error: ' + error.message);
     await sb.rpc('regenerate_schedule_from_today', { p_contract_id: editingContractId });
     // re-price any period with nothing paid yet so the new escalation shows in rent due
-    await sb.rpc('apply_escalation_to_unpaid', { p_contract_id: editingContractId });
+    // Only upcoming periods get the new rent. Past dues keep the rate they were billed at,
+    // unless only the escalation terms changed (then past unpaid periods are re-priced too).
+    const escChanged = JSON.stringify(readEscalationFromForm()) !== editLoadedEsc;
+    const rentChanged = Number(payload.rent_amount) !== editLoadedRent;
+    await sb.rpc('apply_escalation_to_unpaid', { p_contract_id: editingContractId, p_include_past: escChanged && !rentChanged });
     if(advDepChanged(payload)) await applyAdvDep(editingContractId);
     await uploadSignedFileIfSelected(editingContractId);
     await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', editingContractId, 'advance_proof_path', 'advance_proof_name');
@@ -2632,6 +2639,8 @@ async function saveContract(){
       const plural = distinctActiveIds.length > 1 ? 'contracts' : 'contract';
       if(!confirm(`${distinctActiveIds.length} existing active ${plural} on the selected unit(s) will be closed out (end date set to ${dayBefore}) and this new one will become current. Continue?`)) return;
       await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore, recover_dues: true }).in('id', distinctActiveIds);
+      // the older contract stops billing from the new start date; its earlier dues stay at its own rate
+      await sb.rpc('close_replaced_contract_periods', { p_old_contract_ids: distinctActiveIds, p_new_start: start_date });
     }
 
     const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
