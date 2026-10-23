@@ -176,8 +176,9 @@
 
     <div id="drilldownPanel"></div>
 
-    <div class="card">
-      <p class="section-title">Needs attention</p>
+    <div class="card" id="reminderCard">
+      <p class="section-title">Coming up</p>
+      <p class="muted" style="margin-top:0;">Rent falling due in the next few days and leases about to end. Overdue rent is in the Unpaid balances list above.</p>
       <p class="muted" id="reminderEmpty">Nothing pending right now.</p>
       <div id="reminderList"></div>
     </div>
@@ -1137,13 +1138,16 @@ async function loadDashboard(){
   const list = document.getElementById('reminderList');
   const empty = document.getElementById('reminderEmpty');
   list.innerHTML = '';
-  if(!reminders || reminders.length===0){ empty.classList.remove('hidden'); return; }
+  // Overdue rent already shows (once per renter) in "Unpaid balances", so it is not repeated here.
+  const upcoming = (reminders||[]).filter(r=>!(r.reminder_type === 'rent_overdue' || (r.reminder_type === 'rent_payment' && r.days_offset > 0)));
+  document.getElementById('reminderCard').classList.toggle('hidden', upcoming.length === 0);
+  if(upcoming.length===0){ empty.classList.remove('hidden'); return; }
   empty.classList.add('hidden');
 
   const payText = await buildPaymentInstructionsText();
   reminderContextMap = {};
 
-  reminders.forEach(r=>{
+  upcoming.forEach(r=>{
     const isRentType = r.reminder_type === 'rent_payment' || r.reminder_type === 'rent_due' || r.reminder_type === 'rent_overdue';
     const isOverdue = r.reminder_type === 'rent_overdue' || (r.reminder_type === 'rent_payment' && r.days_offset > 0);
     let typeLabel;
