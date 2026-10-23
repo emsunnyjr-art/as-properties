@@ -110,6 +110,26 @@
   <section id="tab-dashboard">
     <div class="grid" id="statGrid"></div>
 
+    <div class="card hidden" id="proofsCard" style="border-color:var(--warn);">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
+        <p class="section-title" style="margin:0;">📥 Payment proofs waiting for you <span id="proofsCount"></span></p>
+        <button class="btn secondary small" onclick="toggleProofSettings()">🔔 Alerts</button>
+      </div>
+      <div id="proofSettings" class="hidden" style="margin:8px 0;">
+        <p class="muted">Get a message on your own phone or email each time a renter sends proof of payment.</p>
+        <div class="row">
+          <div><label>My email</label><input id="ownerEmail" type="email" placeholder="you@example.com"></div>
+          <div><label>My mobile (SMS)</label><input id="ownerPhone" placeholder="09XX XXX XXXX"></div>
+        </div>
+        <button class="btn small" onclick="saveProofSettings()">Save</button>
+      </div>
+      <p class="muted">Nothing is marked paid until you approve. Check your GCash / bank account first, then approve or reject.</p>
+      <table>
+        <thead><tr><th>Renter</th><th>Amount</th><th>Reference</th><th>Receipt date</th><th>Checks</th><th></th></tr></thead>
+        <tbody id="proofsTable"></tbody>
+      </table>
+    </div>
+
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
         <p class="section-title" style="margin:0;">Unpaid balances — active contracts</p>
@@ -1080,6 +1100,7 @@ async function loadBalanceSummary(){
 }
 
 async function loadDashboard(){
+  try{ loadProofs(); }catch(e){}
   const { data: unitRows } = await sb.from('v_unit_status').select('*');
   // The view has one row per contract; count each unit once (occupied wins)
   const unitMap = new Map();
@@ -2080,6 +2101,7 @@ async function showRenterDetail(renterId){
         <button class="btn secondary small" onclick="document.getElementById('renterDetailPanel').innerHTML=''">Dismiss</button>
       </div>
 
+      ${renterPortalHtml(r)}
       <div id="renterDetailId" style="margin:8px 0;"></div>
       <p style="margin:6px 0;"><strong>Units rented now:</strong> ${activeContracts.length ? activeContracts.map(c=>c.unit_names.join(', ')).join(' · ') : '<span class="muted">none</span>'}</p>
       <div class="grid" style="margin:14px 0;">
@@ -2184,7 +2206,7 @@ async function loadRenters(){
   };
   document.getElementById('rentersTable').innerHTML = rows.map(r=>`
     <tr>
-      <td>${r.name}</td><td>${r.business_name||'—'}</td><td style="font-size:13px;">${where(r)}</td><td>${r.contact_number||'—'}</td><td>${r.email||'—'}</td>
+      <td>${r.name}${r.renter_code ? `<br><span class="muted" style="font-size:12px;">${r.renter_code}</span>` : ''}</td><td>${r.business_name||'—'}</td><td style="font-size:13px;">${where(r)}</td><td>${r.contact_number||'—'}</td><td>${r.email||'—'}</td>
       <td>
         <button class="btn small" onclick="showRenterDetail('${r.id}')">View</button>
         <button class="btn secondary small" onclick="startEditRenter('${r.id}')">Edit</button>
@@ -3390,6 +3412,232 @@ async function rpSave(){
   loadDashboard();
   if(!rpRows.length) closeRenterPay();
   alert(`Recorded ${fmtMoney(data?.total ?? total)} for ${data?.lines ?? sel.length} month${(data?.lines ?? sel.length)===1?'':'s'}.`);
+}
+
+// ---------- Proof of payment from renters ----------
+function portalLinkFor(r){
+  return location.href.split('#')[0].split('?')[0].replace(/[^\/]*$/, '') + 'pay-proof.html?t=' + (r.portal_token||'');
+}
+function renterPortalHtml(r){
+  if(!r.portal_token) return '<p class="muted" style="margin:6px 0;">Run ace-feature-update-29.sql to give this renter an ID and payment link.</p>';
+  const link = portalLinkFor(r);
+  const msg = `Hi ${r.name}, here is your personal link to pay and send your proof of payment (Renter ID ${r.renter_code}): ${link}`;
+  const viber = viberNumber(r.contact_number);
+  return `<div style="margin:8px 0;padding:10px;border:1px dashed var(--line);border-radius:10px;">
+    <strong>Renter ID: ${bulkEsc(r.renter_code)}</strong>
+    <span class="muted"> · private payment link for this renter</span><br>
+    <button class="btn secondary small" onclick="copyText('${link}',this)">Copy link</button>
+    ${r.contact_number ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="${smsHref(r.contact_number, msg)}">SMS</a>` : ''}
+    ${viber ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="viber://chat?number=${viber}&text=${encodeURIComponent(msg)}">Viber</a>` : ''}
+    ${r.email ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="mailto:${encodeURIComponent(r.email)}?subject=${encodeURIComponent('Your payment link')}&body=${encodeURIComponent(msg)}">Email</a>` : ''}
+  </div>`;
+}
+function copyText(t, btn){
+  try{ navigator.clipboard.writeText(t); }catch(e){ prompt('Copy this link:', t); }
+  if(btn){ const o = btn.textContent; btn.textContent = 'Copied ✓'; setTimeout(()=>btn.textContent = o, 1500); }
+}
+function toggleProofSettings(){ document.getElementById('proofSettings').classList.toggle('hidden'); }
+async function saveProofSettings(){
+  const rows = [
+    { key:'owner_email', value: document.getElementById('ownerEmail').value.trim(), updated_at: new Date().toISOString() },
+    { key:'owner_phone', value: document.getElementById('ownerPhone').value.trim(), updated_at: new Date().toISOString() }
+  ];
+  const { error } = await sb.from('app_settings').upsert(rows);
+  if(error){ alert('Could not save: ' + error.message); return; }
+  alert('Saved. You will be alerted when a renter sends proof of payment.');
+}
+function proofFlagBadges(f){
+  f = f || {};
+  const out = [];
+  const b = (cls, t, tip) => out.push(`<span class="badge ${cls}" title="${bulkEsc(tip||'')}">${t}</span>`);
+  if(f.typed) b('b-expiring','typed ref, no image','The renter typed the reference without a receipt image. Check the account carefully.');
+  if(f.sender === 'match') b('b-active','sender ✓','Sender matches a registered payer');
+  else if(f.sender === 'different') b('b-overdue','new sender','Sender is not a registered payer of this renter');
+  else if(f.sender === 'none_on_file') b('b-pending','no payer on file','No registered payer for this renter yet');
+  if(f.destination === 'match') b('b-active','your account ✓','The receipt shows one of your payment accounts');
+  else if(f.destination === 'mismatch') b('b-overdue','account not seen','The receipt does not show your payment account');
+  if(f.old_receipt) b('b-overdue','old receipt','Receipt date is more than a year old');
+  return out.join(' ');
+}
+async function loadProofs(){
+  const card = document.getElementById('proofsCard');
+  const { data, error } = await sb.from('payment_proofs')
+    .select('id, amount, paid_at, ref_number, flags, new_sender, created_at, renters(name, renter_code)')
+    .eq('status','pending').order('created_at');
+  if(error){ card.classList.add('hidden'); return; }           // update 29 not run yet
+  // always show the card so the Alerts settings stay reachable
+  card.classList.remove('hidden');
+  const { data: st } = await sb.from('app_settings').select('key,value').in('key',['owner_email','owner_phone']);
+  (st||[]).forEach(x=>{ const el = document.getElementById(x.key==='owner_email'?'ownerEmail':'ownerPhone'); if(el && document.activeElement !== el) el.value = x.value||''; });
+  const rows = data || [];
+  document.getElementById('proofsCount').innerHTML = rows.length ? `<span class="badge b-overdue">${rows.length}</span>` : '';
+  document.getElementById('proofsTable').innerHTML = rows.length ? rows.map(r=>`
+    <tr class="clickRow" onclick="openProofReview('${r.id}')">
+      <td><strong>${bulkEsc(r.renters?.name||'—')}</strong><br><span class="muted">${bulkEsc(r.renters?.renter_code||'')}</span></td>
+      <td><strong>${fmtMoney(r.amount)}</strong></td>
+      <td>${bulkEsc(r.ref_number)}</td>
+      <td>${r.paid_at ? fmtDate(new Date(r.paid_at).toLocaleDateString('sv-SE',{timeZone:'Asia/Manila'})) : '—'}</td>
+      <td>${proofFlagBadges({ ...(r.flags||{}), ...(r.new_sender ? {} : {}) })}${r.new_sender ? ' <span class="badge b-overdue" title="Renter says they paid from a different account">different account</span>' : ''}</td>
+      <td><button class="btn small" onclick="event.stopPropagation();openProofReview('${r.id}')">Review</button></td>
+    </tr>`).join('') : '<tr><td colspan="6" class="muted">No proofs waiting. 🎉</td></tr>';
+}
+
+let pv = null;
+async function openProofReview(id){
+  let ov = document.getElementById('proofOverlay');
+  if(!ov){
+    ov = document.createElement('div'); ov.id = 'proofOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1100;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:20px 10px;';
+    ov.addEventListener('click', e=>{ if(e.target === ov) closeProofReview(); });
+    document.body.appendChild(ov);
+  }
+  ov.style.display = 'flex';
+  ov.innerHTML = '<div class="card" style="max-width:980px;width:100%;"><p class="muted">Loading…</p></div>';
+  const { data: proof, error } = await sb.from('payment_proofs').select('*, renters(name, renter_code, contact_number, email)').eq('id', id).single();
+  if(error || !proof){ ov.innerHTML = `<div class="card" style="max-width:600px;width:100%;"><p>Could not load this proof: ${bulkEsc(error?.message||'not found')}</p><button class="btn secondary" onclick="closeProofReview()">Close</button></div>`; return; }
+  const { data: open } = await sb.rpc('renter_open_periods', { p_renter_id: proof.renter_id });
+  const today = manilaToday();
+  const due = (open||[]).filter(r=>r.due_date <= today), upcoming = (open||[]).filter(r=>r.due_date > today).slice(0,6);
+  const rows = [...due, ...upcoming].map(r=>({ ...r, balance: Number(r.balance), checked:false, alloc:0, isDue: r.due_date <= today }));
+  let acc = 0; const amt = Number(proof.amount);
+  rows.forEach(r=>{ if(acc < amt - 0.004){ r.checked = true; acc += r.balance; } });
+  pv = { proof, rows, amount: amt, left: amt };
+  pvAllocate(); pvRender();
+}
+function closeProofReview(){ const o = document.getElementById('proofOverlay'); if(o) o.style.display = 'none'; pv = null; }
+function pvAllocate(){
+  let left = pv.amount;
+  pv.rows.forEach(r=>{
+    r.alloc = 0;
+    if(r.checked && left > 0.004){ const a = Math.min(r.balance, left); r.alloc = Math.round(a*100)/100; left = Math.round((left - a)*100)/100; }
+  });
+  pv.left = left;
+}
+function pvLabel(r){
+  if(r.rent_period === 'monthly') return new Date(r.period_start + 'T00:00:00').toLocaleDateString(undefined,{month:'long', year:'numeric'});
+  return r.period_start === r.period_end ? fmtDate(r.period_start) : `${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}`;
+}
+function pvRender(){
+  const ov = document.getElementById('proofOverlay'), pr = pv.proof, rn = pr.renters || {};
+  const receiptDay = pr.paid_at ? new Date(pr.paid_at).toLocaleDateString('sv-SE',{timeZone:'Asia/Manila'}) : manilaToday();
+  const applied = pv.rows.reduce((s,r)=>s+r.alloc,0);
+  const owed = pv.rows.filter(r=>r.isDue).reduce((s,r)=>s+r.balance,0);
+  const after = Math.max(0, owed - applied);
+  const f = pr.flags || {};
+  const sameDate = document.getElementById('pvDate') ? document.getElementById('pvDate').value : receiptDay;
+  ov.innerHTML = `
+  <div class="card" style="max-width:980px;width:100%;margin:0;">
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <div><p class="section-title" style="margin:0;">${bulkEsc(rn.name||'')} <span class="muted">· ${bulkEsc(rn.renter_code||'')}</span></p>
+        <p class="muted" style="margin:2px 0;">Sent ${new Date(pr.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'})}</p></div>
+      <button class="btn secondary small" onclick="closeProofReview()">✕ Close</button>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
+      <div style="flex:1 1 280px;min-width:260px;">
+        ${pr.image_b64 ? `<img src="data:image/jpeg;base64,${pr.image_b64}" style="max-width:100%;max-height:520px;border-radius:10px;border:1px solid var(--line);cursor:zoom-in;" onclick="window.open(this.src,'_blank')">`
+          : pr.image_path ? `<button class="btn secondary" onclick="viewStoredFile('${pr.image_path}','Receipt')">📄 View receipt</button>`
+          : '<div class="muted" style="padding:20px;border:1px dashed var(--line);border-radius:10px;">No image — the renter typed the reference number.</div>'}
+      </div>
+      <div style="flex:1 1 360px;min-width:300px;">
+        <table>
+          <tr><td class="muted">Amount</td><td><strong style="font-size:20px;">${fmtMoney(pr.amount)}</strong></td></tr>
+          <tr><td class="muted">Reference</td><td><strong>${bulkEsc(pr.ref_number)}</strong></td></tr>
+          <tr><td class="muted">Receipt date</td><td>${pr.paid_at ? new Date(pr.paid_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'}) : '—'}</td></tr>
+          <tr><td class="muted">Sender</td><td>${bulkEsc(pr.sender_text||'—')}</td></tr>
+          ${pr.note ? `<tr><td class="muted">Renter note</td><td>${bulkEsc(pr.note)}</td></tr>` : ''}
+        </table>
+        <p style="margin:8px 0;">${proofFlagBadges(f)}${pr.new_sender ? ' <span class="badge b-overdue">renter says: different account</span>' : ''}</p>
+
+        <p class="section-title" style="margin:10px 0 4px;">Apply to months</p>
+        <div style="max-height:230px;overflow:auto;">
+        <table>
+          <thead><tr><th></th><th>Month</th><th>Balance</th><th>This payment</th></tr></thead>
+          <tbody>${pv.rows.length ? pv.rows.map((r,i)=>`<tr ${r.isDue?'':'style="opacity:.7"'}>
+            <td><input type="checkbox" ${r.checked?'checked':''} onchange="pvToggle(${i},this.checked)"></td>
+            <td>${bulkEsc(pvLabel(r))}${r.isDue?'':' <span class="muted">(not yet due)</span>'}<br><span class="muted">${bulkEsc(r.unit_names||'')}</span></td>
+            <td>${fmtMoney(r.balance)}</td><td>${r.alloc ? fmtMoney(r.alloc) : '—'}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">No unpaid months for this renter.</td></tr>'}</tbody>
+        </table></div>
+        <p style="margin:8px 0;">
+          ${pv.left > 0.004 ? `<span class="bad">₱${pv.left.toLocaleString('en-PH',{minimumFractionDigits:2})} of this payment is not applied to any month. Tick more months or reject.</span>`
+            : `<span class="good">✓ Fully applied.</span> Unpaid (already due) after this payment: <strong>${fmtMoney(after)}</strong>`}
+        </p>
+
+        <div class="row">
+          <div><label>Date received</label><input id="pvDate" type="date" value="${sameDate}" max="${manilaToday()}"></div>
+          <div><label>Paid through</label><select id="pvMethod"><option value="gcash">GCash</option><option value="maya">Maya</option><option value="bank">Bank transfer</option><option value="cash">Cash</option><option value="other">Other</option></select></div>
+        </div>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:8px;"><input id="pvPayer" type="checkbox" style="width:auto" ${pr.sender_text && f.sender !== 'match' ? 'checked' : ''} ${pr.sender_text ? '' : 'disabled'}> Remember this sender as a payer for ${bulkEsc(rn.name||'this renter')}</label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+          <button class="btn" id="pvApprove" ${pv.left > 0.004 || !applied ? 'disabled' : ''} onclick="pvApprove()">✅ I checked my account — Approve</button>
+          <button class="btn danger" onclick="pvShowReject()">Reject…</button>
+        </div>
+        <div id="pvRejectBox" class="hidden" style="margin-top:12px;padding:10px;border:1px solid var(--bad);border-radius:10px;">
+          <label>Reason (the renter will see this)</label>
+          <select id="pvReasonSel" onchange="document.getElementById('pvReasonTxt').value=this.value">
+            <option value="">Choose…</option>
+            <option>The receipt image is not clear</option>
+            <option>The amount does not match what was received</option>
+            <option>The payment was not received in my account</option>
+            <option>The reference number is incorrect</option>
+            <option>The payment was sent to a different account</option>
+          </select>
+          <input id="pvReasonTxt" placeholder="or type your own reason" style="margin-top:6px;">
+          <button class="btn danger small" style="margin-top:8px;" onclick="pvReject()">Reject and notify renter</button>
+        </div>
+        <div id="pvResult"></div>
+      </div>
+    </div>
+  </div>`;
+}
+function pvToggle(i,on){ pv.rows[i].checked = on; pvAllocate(); const keep = document.getElementById('pvMethod')?.value; pvRender(); if(keep) document.getElementById('pvMethod').value = keep; }
+function pvShowReject(){ document.getElementById('pvRejectBox').classList.toggle('hidden'); }
+async function pvApprove(){
+  const pr = pv.proof, rn = pr.renters || {};
+  const alloc = pv.rows.filter(r=>r.alloc > 0).map(r=>({ rent_payment_id: r.rent_payment_id, amount: r.alloc }));
+  const date = document.getElementById('pvDate').value;
+  if(!date || date > manilaToday()){ alert('Choose a date received that is today or earlier.'); return; }
+  if(!confirm(`Record ${fmtMoney(pr.amount)} from ${rn.name} (ref ${pr.ref_number}) for ${alloc.length} month${alloc.length===1?'':'s'}?\n\nOnly do this after you have seen the money in your account.`)) return;
+  const btn = document.getElementById('pvApprove'); btn.disabled = true; btn.textContent = 'Saving…';
+  let path = null, name = null;
+  if(pr.image_b64){
+    try{
+      const blob = await (await fetch('data:image/jpeg;base64,' + pr.image_b64)).blob();
+      path = `proofs/${pr.renter_id}/${pr.id}.jpg`; name = `receipt-${pr.ref_number}.jpg`.replace(/[^A-Za-z0-9._-]/g,'_');
+      const up = await sb.storage.from('contract-files').upload(path, blob, { contentType:'image/jpeg', upsert:true });
+      if(up.error) throw up.error;
+    }catch(e){
+      if(!confirm('The receipt image could not be filed (' + (e.message||e) + '). Record the payment anyway? The image stays attached to this proof.')){ btn.disabled = false; btn.textContent = '✅ I checked my account — Approve'; return; }
+      path = null; name = null;
+    }
+  }
+  const { data, error } = await sb.rpc('approve_payment_proof', {
+    p_proof_id: pr.id, p_allocations: alloc, p_received_date: date,
+    p_method: document.getElementById('pvMethod').value, p_receipt_path: path, p_receipt_name: name,
+    p_note: 'Proof sent by renter', p_save_payer: !!document.getElementById('pvPayer')?.checked
+  });
+  if(error){ alert('Nothing was recorded: ' + error.message); btn.disabled = false; btn.textContent = '✅ I checked my account — Approve'; return; }
+  closeProofReview();
+  alert(`Recorded ${fmtMoney(data?.total ?? pr.amount)} from ${rn.name}. The renter was notified.`);
+  loadDashboard();
+  try{ loadPaymentSchedule(); }catch(e){}
+}
+async function pvReject(){
+  const pr = pv.proof, rn = pr.renters || {};
+  const reason = document.getElementById('pvReasonTxt').value.trim();
+  if(!reason){ alert('Please choose or type a reason so the renter knows what to fix.'); return; }
+  if(!confirm(`Reject this proof and notify ${rn.name}?`)) return;
+  const link = portalLinkFor({ portal_token: (await sb.from('renters').select('portal_token').eq('id', pr.renter_id).single()).data?.portal_token });
+  const { data, error } = await sb.rpc('reject_payment_proof', { p_proof_id: pr.id, p_reason: reason, p_link: link });
+  if(error){ alert('Could not reject: ' + error.message); return; }
+  const lvl = data.level;
+  const viber = viberNumber(data.contact);
+  document.getElementById('pvResult').innerHTML = `<div class="okbox" style="margin-top:12px;padding:10px;border:1px solid var(--good);border-radius:10px;">
+    <strong>Rejected.</strong> ${lvl >= 3 ? 'This is the renter\'s <strong>3rd</strong> rejected proof — a FINAL NOTICE was sent.' : lvl === 2 ? 'This is the 2nd rejection — a firmer reminder was sent.' : 'A polite notice was sent.'}
+    The message goes out by email and SMS within a minute (if on file). You can also send it yourself:<br>
+    ${data.contact ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="${smsHref(data.contact, data.message)}">SMS</a>` : ''}
+    ${viber ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="viber://chat?number=${viber}&text=${encodeURIComponent(data.message)}">Viber</a>` : ''}
+    <button class="btn secondary small" onclick="closeProofReview()">Done</button></div>`;
+  loadDashboard();
 }
 
 // ---------- Bulk payment update ----------

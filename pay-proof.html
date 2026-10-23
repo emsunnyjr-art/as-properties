@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Send Proof of Payment</title>
+<style>
+  :root{--bg:#f4f6fb;--card:#fff;--text:#18202e;--muted:#667085;--line:#e1e6ef;--brand:#2459d6;--brand-ink:#fff;--good:#14804a;--bad:#c0392b;--warn:#9a6700;--soft:#eef3ff;}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1722;--card:#18222f;--text:#e8edf5;--muted:#9aa7b8;--line:#2a3646;--brand:#5b8cff;--brand-ink:#0b1220;--good:#4cc38a;--bad:#ff7b6b;--warn:#f0b84d;--soft:#1d2a3d;}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
+  main{max-width:560px;margin:0 auto;padding:16px;}
+  h1{font-size:20px;margin:6px 0 2px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:12px 0;}
+  .muted{color:var(--muted);font-size:14px}
+  .chip{display:inline-block;background:var(--soft);color:var(--brand);border-radius:999px;padding:2px 10px;font-weight:600;font-size:13px}
+  .big{font-size:30px;font-weight:700;margin:2px 0}
+  .bad{color:var(--bad)} .good{color:var(--good)} .warn{color:var(--warn)}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  input[type=text],input[type=number],input[type=datetime-local],textarea{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);font-size:16px}
+  input.need{border-color:var(--bad);box-shadow:0 0 0 2px rgba(192,57,43,.15)}
+  button,.btn{display:block;width:100%;padding:14px;border:0;border-radius:12px;background:var(--brand);color:var(--brand-ink);font-size:17px;font-weight:600;text-align:center;cursor:pointer}
+  button.secondary{background:var(--soft);color:var(--brand)}
+  button.small{display:inline-block;width:auto;padding:6px 12px;font-size:14px;border-radius:8px}
+  button:disabled{opacity:.5}
+  .row{display:flex;gap:10px} .row>*{flex:1}
+  .method{display:flex;justify-content:space-between;align-items:center;gap:8px;border-top:1px solid var(--line);padding:10px 0}
+  .method:first-of-type{border-top:0}
+  .err{background:rgba(192,57,43,.1);border:1px solid var(--bad);border-radius:12px;padding:14px;margin:12px 0}
+  .okbox{background:rgba(20,128,74,.1);border:1px solid var(--good);border-radius:12px;padding:14px;margin:12px 0}
+  .bar{height:8px;background:var(--line);border-radius:6px;overflow:hidden;margin:10px 0}
+  .bar>i{display:block;height:100%;width:0;background:var(--brand);transition:width .2s}
+  img.preview{max-width:100%;max-height:220px;border-radius:10px;border:1px solid var(--line);display:block;margin:8px 0}
+  table{width:100%;border-collapse:collapse;font-size:14px} td{padding:6px 0;border-top:1px solid var(--line)}
+  .hidden{display:none}
+  .st-pending{color:var(--warn)} .st-approved{color:var(--good)} .st-rejected{color:var(--bad)}
+  input[type=file]{display:none}
+  details summary{cursor:pointer;color:var(--brand);font-size:14px}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+</head>
+<body>
+<main id="app">
+  <p class="muted">Loading…</p>
+</main>
+
+<script>
+const SUPABASE_URL = "https://izpaskyqsozpgfgnmlqu.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_7rT5LFITgGrwZwCgy_2VMQ_nUJrxmmU";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const TOKEN = new URLSearchParams(location.search).get('t') || '';
+
+// ---- receipt reading helpers (shared by the page and the tests) ----
+var MONTHS = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
+
+function cleanOcrText(t){
+  return String(t||'').replace(/\r/g,'').replace(/[|¦]/g,' ').replace(/[ \t]+/g,' ');
+}
+function toMoney(s){
+  if(!s) return null;
+  var v = parseFloat(String(s).replace(/[,\s]/g,''));
+  return (isFinite(v) && v > 0 && v < 10000000) ? Math.round(v*100)/100 : null;
+}
+function parseAmount(text){
+  var lines = cleanOcrText(text).split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  var moneyRe = /(?:^|[^0-9.,])((?:\d{1,3}(?:[, ]\d{3})+|\d+)\.\d{2})(?!\d)/g;
+  var good = /amount|total|sent|paid|payment|transfer|you sent|debit/i;
+  var bad  = /fee|charge|balance|available|limit|tax|discount/i;
+  var labeled = [], other = [];
+  lines.forEach(function(line, i){
+    var m, ctx = line;
+    var found = [];
+    moneyRe.lastIndex = 0;
+    while((m = moneyRe.exec(line))) found.push(m[1]);
+    if(!found.length && i+1 < lines.length && good.test(line) && !bad.test(line)){
+      // value on the next line
+      moneyRe.lastIndex = 0;
+      while((m = moneyRe.exec(lines[i+1]))) found.push(m[1]);
+      ctx = line + ' ' + lines[i+1];
+    }
+    found.forEach(function(f){
+      var v = toMoney(f); if(v == null) return;
+      if(good.test(ctx) && !bad.test(ctx)) labeled.push(v); else if(!bad.test(ctx)) other.push(v);
+    });
+  });
+  if(labeled.length){
+    // "Amount" and "Total Amount Sent" usually agree; take the most repeated, else the largest
+    var counts = {}; labeled.forEach(function(v){ counts[v] = (counts[v]||0)+1; });
+    var best = null, bc = 0;
+    Object.keys(counts).forEach(function(k){ if(counts[k] > bc || (counts[k] === bc && Number(k) > Number(best))){ best = k; bc = counts[k]; } });
+    return Number(best);
+  }
+  if(other.length) return Math.max.apply(null, other);
+  return null;
+}
+function parseReference(text){
+  var lines = cleanOcrText(text).split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  var label = /(?:ref(?:erence)?\.?\s*(?:no|number|num|id|code|#)?\.?|trace\s*(?:no|number)|transaction\s*(?:no|number|id)|confirmation\s*(?:no|number|code)|txn\s*(?:id|no)|invoice\s*no)\s*[:#.\-]*\s*(.*)$/i;
+  function take(str){
+    var toks = String(str||'').replace(/[:#]/g,' ').split(/\s+/).filter(Boolean), out = [];
+    for(var i=0;i<toks.length;i++){
+      var tk = toks[i].replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g,'');
+      if(!/^[A-Za-z0-9\-]+$/.test(tk) || !/\d/.test(tk)) { if(out.length) break; else continue; }
+      out.push(tk);
+    }
+    return out.join(' ');
+  }
+  for(var i=0;i<lines.length;i++){
+    var m = lines[i].match(label);
+    if(m){
+      var v = take(m[1]);
+      if(v.replace(/[^A-Za-z0-9]/g,'').length < 6 && i+1 < lines.length) v = take(m[1] + ' ' + lines[i+1]);
+      if(v.replace(/[^A-Za-z0-9]/g,'').length >= 6) return v;
+    }
+  }
+  return '';
+}
+function parseDateTime(text){
+  var t = cleanOcrText(text).replace(/\n/g,'  ');
+  var m = t.match(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2})(?:[,\s]+(?:at\s+)?(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?)?/);
+  var y, mo, d, hh = null, mi = null;
+  if(m){ mo = MONTHS[m[1].toLowerCase()]; d = +m[2]; y = +m[3]; if(m[4]){ hh = +m[4]; mi = +m[5]; if(m[6]){ var pm = /p/i.test(m[6]); if(pm && hh < 12) hh += 12; if(!pm && hh === 12) hh = 0; } } }
+  else {
+    var n = t.match(/\b(20\d{2})[-\/](\d{1,2})[-\/](\d{1,2})(?:[ T,]+(\d{1,2}):(\d{2}))?/);
+    if(n){ y=+n[1]; mo=+n[2]; d=+n[3]; if(n[4]){hh=+n[4]; mi=+n[5];} }
+    else {
+      var p = t.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](20\d{2})(?:[ ,]+(\d{1,2}):(\d{2})\s*([AaPp][Mm])?)?/);
+      if(p){ d=+p[1]; mo=+p[2]; y=+p[3]; if(mo>12){ var x=mo; mo=d; d=x; } if(p[4]){ hh=+p[4]; mi=+p[5]; if(p[6]){ var pm2=/p/i.test(p[6]); if(pm2&&hh<12) hh+=12; if(!pm2&&hh===12) hh=0; } } }
+      else return null;
+    }
+  }
+  if(!(mo>=1 && mo<=12 && d>=1 && d<=31)) return null;
+  var pad = function(n){ return String(n).padStart(2,'0'); };
+  return { date: y+'-'+pad(mo)+'-'+pad(d), time: hh==null ? '' : pad(hh)+':'+pad(mi) };
+}
+function parseSender(text){
+  var lines = cleanOcrText(text).split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  var re = /^(?:from|sender|sent by|paid by|account name|source account|debit(?:ed)? from)\b\s*[:\-]?\s*(.*)$/i;
+  for(var i=0;i<lines.length;i++){
+    var m = lines[i].match(re);
+    if(m){
+      var v = (m[1]||'').trim();
+      if(v.length < 3 && i+1 < lines.length) v = lines[i+1].trim();
+      if(v.length >= 3) return v.slice(0,80);
+    }
+  }
+  return '';
+}
+function digitsOnly(s){ return String(s||'').replace(/\D/g,''); }
+// Did the receipt go to one of the owner's accounts?  returns 'match' | 'mismatch' | 'unknown'
+function destinationCheck(text, methods){
+  if(!methods || !methods.length) return 'unknown';
+  var txt = cleanOcrText(text), low = txt.toLowerCase().replace(/[^a-z0-9 ]/g,' ');
+  var alldig = digitsOnly(txt);
+  for(var i=0;i<methods.length;i++){
+    var mth = methods[i], nd = digitsOnly(mth.account_number);
+    if(nd.length >= 4 && alldig.indexOf(nd.slice(-4)) >= 0) return 'match';
+    if(mth.account_name){
+      var toks = mth.account_name.toLowerCase().replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(function(x){return x.length>=3;});
+      var hit = toks.filter(function(x){ return low.indexOf(x) >= 0; }).length;
+      if(toks.length && hit >= Math.min(2, toks.length)) return 'match';
+    }
+  }
+  return 'mismatch';
+}
+function parseReceipt(text){
+  var dt = parseDateTime(text);
+  return { amount: parseAmount(text), ref: parseReference(text), datetime: dt, sender: parseSender(text) };
+}
+
+
+// ---------- tiny helpers ----------
+const $ = id => document.getElementById(id);
+function esc(t){ return String(t==null?'':t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function peso(n){ return '₱' + Number(n||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtDay(iso){ return new Date(iso+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}); }
+function monthLabel(m){
+  if(m.rent_period === 'monthly') return new Date(m.start+'T00:00:00').toLocaleDateString('en-PH',{month:'long',year:'numeric'});
+  return m.start === m.end ? fmtDay(m.start) : fmtDay(m.start)+' – '+fmtDay(m.end);
+}
+function manilaNowLocalValue(){
+  const s = new Date().toLocaleString('sv-SE',{timeZone:'Asia/Manila'}).replace(' ','T');
+  return s.slice(0,16);
+}
+
+let INFO = null;          // data from portal_get
+let READ = null;          // what we read from the current image
+let IMG_B64 = null;       // compressed image to upload
+let worker = null;
+let justSent = false;
+
+async function load(){
+  if(!TOKEN){ $('app').innerHTML = '<div class="card"><h1>Link needed</h1><p class="muted">Please open the personal payment link that was sent to you. If you do not have it, ask the lessor to send it again.</p></div>'; return; }
+  const { data, error } = await sb.rpc('portal_get', { p_token: TOKEN });
+  if(error){ $('app').innerHTML = `<div class="card"><h1>Link not valid</h1><p class="muted">${esc(error.message)}</p></div>`; return; }
+  INFO = data; render();
+}
+
+function render(){
+  const r = INFO.renter, due = Number(INFO.due_total||0);
+  const months = INFO.months || [];
+  $('app').innerHTML = `
+    ${justSent ? '<div class="okbox"><b>Sent ✓</b><p style="margin:6px 0 0">Thank you! Your proof of payment was sent. You will receive a message once it is confirmed.</p></div>' : ''}
+    <div class="card">
+      <span class="chip">Renter ID ${esc(r.code)}</span>
+      <h1>${esc(r.name)}</h1>
+      <p class="muted" style="margin:0">Amount due now</p>
+      <div class="big ${due>0?'bad':'good'}">${due>0 ? peso(due) : 'Nothing due 🎉'}</div>
+      ${months.length ? `<details><summary>Show the ${months.length} unpaid month${months.length===1?'':'s'}</summary><table>${months.map(m=>`<tr><td>${esc(monthLabel(m))}${m.units?`<br><span class="muted">${esc(m.units)}</span>`:''}</td><td style="text-align:right">${peso(m.balance)}</td></tr>`).join('')}</table></details>` : ''}
+    </div>
+
+    ${(INFO.methods||[]).length ? `<div class="card"><b>Where to pay</b>
+      ${(INFO.methods).map(m=>`<div class="method"><div><b>${esc(m.label)}</b><br><span class="muted">${esc(m.account_name||'')}</span><br>${esc(m.account_number||'')}</div>${m.account_number?`<button class="secondary small" data-copy="${esc(m.account_number)}">Copy</button>`:''}</div>`).join('')}
+      <p class="muted" style="margin-bottom:0">Pay first, then send your receipt below.</p></div>` : ''}
+
+    <div class="card" id="sendCard">
+      <b>Send your receipt</b>
+      <p class="muted">Take a <b>full screenshot</b> of the receipt in your GCash, Maya or bank app. The amount, reference number and date must be visible.</p>
+      <label class="btn" for="file" style="margin-top:8px">📷 Choose receipt image</label>
+      <input id="file" type="file" accept="image/*">
+      <div id="work"></div>
+      <p style="text-align:center;margin:12px 0 0"><a href="#" id="typedLink" style="color:var(--brand);font-size:14px">No screenshot? Type the reference number instead</a></p>
+    </div>
+
+    <div id="formArea"></div>
+
+    ${(INFO.recent||[]).length ? `<div class="card"><b>Your recent submissions</b>${INFO.recent.map(x=>`
+      <div class="method" style="display:block"><div style="display:flex;justify-content:space-between"><span>${peso(x.amount)} <span class="muted">· ref ${esc(x.ref)}</span></span>
+      <span class="st-${esc(x.status)}">${x.status==='pending'?'Waiting for confirmation':x.status==='approved'?'Confirmed ✓':'Not confirmed'}</span></div>
+      ${x.status==='rejected'?`<div class="muted">Reason: ${esc(x.reject_reason||'')}. Please send a clear receipt or the correct reference number.</div>`:''}</div>`).join('')}</div>` : ''}
+    <p class="muted" style="text-align:center">Your payment is recorded after the lessor confirms it in the account.</p>`;
+
+  document.querySelectorAll('[data-copy]').forEach(b=>b.onclick=()=>{ navigator.clipboard && navigator.clipboard.writeText(b.dataset.copy); b.textContent='Copied'; setTimeout(()=>b.textContent='Copy',1500); });
+  $('file').onchange = e => { const f = e.target.files[0]; if(f){ justSent = false; handleFile(f); } e.target.value=''; };
+  $('typedLink').onclick = e => { e.preventDefault(); READ = null; IMG_B64 = null; $('work').innerHTML=''; showForm({typed:true}); };
+}
+
+// ---------- image checks ----------
+function fileToImage(file){
+  return new Promise((res,rej)=>{
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = ()=>{ URL.revokeObjectURL(url); res(im); };
+    im.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('open')); };
+    im.src = url;
+  });
+}
+function drawScaled(im, maxW){
+  const s = Math.min(1, maxW / im.naturalWidth);
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(im.naturalWidth*s)); c.height = Math.max(1, Math.round(im.naturalHeight*s));
+  c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+  return c;
+}
+function qualityStats(im){
+  const c = drawScaled(im, 640), g = c.getContext('2d').getImageData(0,0,c.width,c.height), w = c.width, h = c.height, d = g.data;
+  const gray = new Float32Array(w*h); let sum = 0;
+  for(let i=0;i<w*h;i++){ gray[i] = 0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2]; sum += gray[i]; }
+  const mean = sum/(w*h);
+  let n = 0, m1 = 0, m2 = 0;                       // variance of the Laplacian = sharpness
+  for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){
+    const i = y*w+x, v = 4*gray[i]-gray[i-1]-gray[i+1]-gray[i-w]-gray[i+w];
+    n++; m1 += v; m2 += v*v;
+  }
+  const sharp = m2/n - (m1/n)*(m1/n);
+  return { mean, sharp };
+}
+function ocrCanvas(im, invert){
+  const c = drawScaled(im, 1600);
+  if(c.width < 1000){ // small image: enlarge so letters are big enough
+    const s = 1000/c.width, c2 = document.createElement('canvas'); c2.width = 1000; c2.height = Math.round(c.height*s);
+    c2.getContext('2d').drawImage(c,0,0,c2.width,c2.height); return prep(c2, invert);
+  }
+  return prep(c, invert);
+}
+function prep(c, invert){
+  const ctx = c.getContext('2d'), g = ctx.getImageData(0,0,c.width,c.height), d = g.data;
+  for(let i=0;i<d.length;i+=4){
+    let v = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+    if(invert) v = 255 - v;
+    v = Math.max(0, Math.min(255, (v-128)*1.25+128));
+    d[i]=d[i+1]=d[i+2]=v;
+  }
+  ctx.putImageData(g,0,0); return c;
+}
+async function getWorker(onProgress){
+  if(worker) return worker;
+  worker = await Tesseract.createWorker('eng', 1, {
+    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',
+    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1',
+    langPath: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int',
+    logger: m => { if(m.status === 'recognizing text' && onProgress) onProgress(m.progress); }
+  });
+  return worker;
+}
+
+function deny(msg){
+  $('work').innerHTML = `<div class="err"><b>We could not use this image</b><p style="margin:6px 0 10px">${msg}</p>
+    <label class="btn" for="file">📷 Send a clearer image</label>
+    <button class="secondary" style="margin-top:8px" id="typeInstead">Type the reference number instead</button></div>`;
+  $('typeInstead').onclick = () => { READ = null; IMG_B64 = null; $('work').innerHTML=''; showForm({typed:true}); };
+  $('formArea').innerHTML = '';
+}
+
+async function handleFile(file){
+  READ = null; IMG_B64 = null; $('formArea').innerHTML = '';
+  if(!/^image\//.test(file.type) && !/\.(png|jpe?g|webp|heic|heif)$/i.test(file.name)){ return deny('Please choose a picture (screenshot) of your receipt.'); }
+  if(file.size > 20*1024*1024) return deny('That file is too large. Please send a normal screenshot.');
+  $('work').innerHTML = '<p class="muted">Checking your image…</p><div class="bar"><i id="pbar"></i></div>';
+  let im;
+  try{ im = await fileToImage(file); }catch(e){ return deny('We could not open this picture. Please send a screenshot (PNG or JPG), not a PDF or HEIC photo.'); }
+  if(Math.min(im.naturalWidth, im.naturalHeight) < 480) return deny('The image is too small to read. Please send the full screenshot.');
+  const q = qualityStats(im);
+  if(q.mean < 25) return deny('The image is too dark. Please send the screenshot again.');
+  if(q.sharp < 10) return deny('The image looks blurry or empty. Please take the screenshot again — do not zoom or photograph the screen.');
+
+  let text = '', conf = 0;
+  try{
+    $('work').innerHTML = '<p class="muted">Reading your receipt… (the first time takes a few seconds)</p><div class="bar"><i id="pbar"></i></div>';
+    const w = await getWorker(p => { const b = $('pbar'); if(b) b.style.width = Math.round(p*100)+'%'; });
+    const invert = q.mean < 110;                       // dark-theme receipts
+    const r = await w.recognize(ocrCanvas(im, invert));
+    text = r.data.text || ''; conf = r.data.confidence || 0;
+  }catch(e){
+    return deny('The receipt reader could not start on this phone. Please try again, or type the reference number instead.');
+  }
+  const flat = text.replace(/\s+/g,'');
+  if(conf < 55 || flat.length < 40) return deny('The text on the image is not clear enough to read. Please send the screenshot again.');
+  const rd = parseReceipt(text);
+  if(!rd.amount) return deny('We could not find the amount in this image. Please send the full receipt screenshot again, or type the reference number instead.');
+
+  const sm = drawScaled(im, 1280);
+  IMG_B64 = sm.toDataURL('image/jpeg', 0.78).split(',')[1];
+  READ = { text, conf, parsed: rd, dest: destinationCheck(text, INFO.methods || []), preview: 'data:image/jpeg;base64,' + IMG_B64 };
+  $('work').innerHTML = '';
+  showForm({ typed:false });
+}
+
+// ---------- confirm form ----------
+function showForm(opts){
+  const rd = READ ? READ.parsed : { amount:null, ref:'', datetime:null, sender:'' };
+  const dtv = rd.datetime ? `${rd.datetime.date}T${rd.datetime.time || '12:00'}` : manilaNowLocalValue();
+  const typed = !!opts.typed;
+  $('formArea').innerHTML = `<div class="card">
+    <b>${typed ? 'Type your payment details' : 'Please check what we read'}</b>
+    ${typed ? '<p class="muted">Without a picture, the lessor will check your reference number in the account.</p>'
+            : `<img class="preview" src="${READ.preview}" alt="receipt">
+               <div class="okbox" style="margin-top:0">✅ We read the receipt. Please make sure everything below is correct.</div>
+               ${READ.dest === 'mismatch' ? '<div class="err">⚠️ We could not see the lessor\'s account on this receipt. Please make sure you paid to the account shown above.</div>' : ''}`}
+    <label>Amount you paid (₱)</label>
+    <input id="fAmount" type="number" inputmode="decimal" step="0.01" min="1" value="${rd.amount ?? ''}" class="${rd.amount?'':'need'}">
+    <label>Reference number ${!typed && !rd.ref ? '<span class="bad">— we could not read it, please type it</span>' : ''}</label>
+    <input id="fRef" type="text" autocomplete="off" value="${esc(rd.ref)}" class="${rd.ref?'':'need'}" placeholder="e.g. 1234 567 890123">
+    <label>Date and time on the receipt</label>
+    <input id="fWhen" type="datetime-local" value="${dtv}">
+    <label>Name or number you paid from (optional)</label>
+    <input id="fSender" type="text" value="${esc(rd.sender)}" placeholder="e.g. Juan Dela Cruz / 0917…">
+    <label style="display:flex;gap:8px;align-items:center;color:var(--text);font-size:15px"><input id="fNew" type="checkbox" style="width:auto"> I paid from a different account than usual</label>
+    <label>Note (optional)</label>
+    <input id="fNote" type="text" placeholder="e.g. rent for September and October">
+    <div id="formMsg"></div>
+    <button id="sendBtn" style="margin-top:14px">Send to the lessor</button>
+  </div>`;
+  $('sendBtn').onclick = () => send(typed);
+  $('formArea').scrollIntoView({behavior:'smooth'});
+}
+
+async function send(typed){
+  const amount = parseFloat($('fAmount').value);
+  const ref = $('fRef').value.trim();
+  const msg = $('formMsg');
+  const fail = t => { msg.innerHTML = `<div class="err">${esc(t)}</div>`; };
+  if(!(amount > 0)) return fail('Please enter the amount you paid.');
+  if(ref.replace(/[^A-Za-z0-9]/g,'').length < 6) return fail('Please type the reference number printed on your receipt (at least 6 characters).');
+  const when = $('fWhen').value;
+  const btn = $('sendBtn'); btn.disabled = true; btn.textContent = 'Sending…';
+  const { data, error } = await sb.rpc('submit_payment_proof', {
+    p_token: TOKEN,
+    p_amount: amount,
+    p_paid_at: when ? when + ':00+08:00' : null,
+    p_ref: ref,
+    p_sender: $('fSender').value.trim() || null,
+    p_image_b64: typed ? null : IMG_B64,
+    p_mode: typed ? 'typed' : 'image',
+    p_ocr_text: typed || !READ ? null : READ.text.slice(0, 3500),
+    p_confidence: typed || !READ ? null : READ.conf,
+    p_new_sender: $('fNew').checked,
+    p_note: $('fNote').value.trim() || null,
+    p_dest_match: typed || !READ ? 'unknown' : READ.dest
+  });
+  btn.disabled = false; btn.textContent = 'Send to the lessor';
+  if(error) return fail(error.message);
+  READ = null; IMG_B64 = null; justSent = true;
+  await load();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+load();
+</script>
+</body>
+</html>
