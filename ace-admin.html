@@ -46,6 +46,8 @@
   .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;}
   .b-active,.b-paid,.b-occupied{background:rgba(62,207,142,.15);color:var(--good);}
   .b-pending,.b-vacant{background:rgba(143,163,179,.15);color:var(--muted);}
+  tr.clickRow{cursor:pointer;}
+  tr.clickRow:hover td{background:rgba(120,160,255,.08);}
   .b-waived{background:rgba(150,150,150,.18);color:var(--muted,#999);}
   .b-overdue,.b-expired,.b-cancelled{background:rgba(239,91,91,.15);color:var(--bad);}
   .b-partial,.b-expiring{background:rgba(242,184,75,.15);color:var(--warn);}
@@ -1060,7 +1062,7 @@ async function loadBalanceSummary(){
     const msg = `Hi ${r.renter_name}, your unpaid rent for ${r.unit_names} is ${fmtMoney(r.balance)} for ${n} ${label} (${range}). Kindly settle at your earliest convenience.${payText}`;
     balanceContextMap[r.contract_id] = { amount: r.balance, renterName: r.renter_name, unitName: r.unit_names };
     return `
-      <tr>
+      <tr class="clickRow" onclick="balanceRowClick(event,'${r.contract_id}')" title="Click to select months and record payment">
         <td><strong>${r.renter_name}</strong>${r.status==='cancelled' ? '<br><span class="badge b-cancelled">cancelled · recovering</span>' : ''}${r.past_end_date ? `<br><span class="badge b-expiring" title="No newer contract is on file, so the same terms continue">Lease ended ${fmtDate(r.end_date)} · continuing</span>` : ''}</td>
         <td>${r.unit_names || '—'}</td>
         <td>${n} ${label}</td>
@@ -3275,6 +3277,119 @@ async function collectItemizedBill(contractId){
   if(error){ alert('Nothing was saved. ' + error.message); return; }
   alert(`${peso(data.total)} recorded across ${data.lines} item(s).`);
   loadItemizedBill(); loadPaymentSchedule(); loadDashboard();
+}
+
+// ---------- Click a dashboard row -> pick months -> record payment ----------
+let rpRows = [], rpContractId = null, rpShowUpcoming = false;
+function balanceRowClick(ev, contractId){
+  if(ev.target.closest('a,button,input,select')) return;
+  openRenterPay(contractId);
+}
+async function openRenterPay(contractId){
+  rpContractId = contractId; rpShowUpcoming = false;
+  let ov = document.getElementById('renterPayOverlay');
+  if(!ov){
+    ov = document.createElement('div');
+    ov.id = 'renterPayOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 12px;';
+    ov.addEventListener('click', e=>{ if(e.target === ov) closeRenterPay(); });
+    document.body.appendChild(ov);
+  }
+  ov.style.display = 'flex';
+  ov.innerHTML = '<div class="card" style="max-width:760px;width:100%;"><p class="muted">Loading…</p></div>';
+  await rpLoad();
+}
+function closeRenterPay(){ const ov = document.getElementById('renterPayOverlay'); if(ov) ov.style.display = 'none'; }
+async function rpLoad(){
+  const ov = document.getElementById('renterPayOverlay');
+  let q = sb.from('v_payment_detail').select('*').eq('contract_id', rpContractId).in('status',['pending','partial','overdue']);
+  if(!rpShowUpcoming) q = q.lte('due_date', manilaToday());
+  const { data, error } = await q.order('period_start').limit(500);
+  if(error){ ov.innerHTML = `<div class="card" style="max-width:760px;width:100%;"><p class="muted">Could not load: ${bulkEsc(error.message)}</p><button class="btn secondary" onclick="closeRenterPay()">Close</button></div>`; return; }
+  const { data: head } = await sb.from('v_contract_balance').select('renter_name,unit_names,contact_number,status,rent_period').eq('contract_id', rpContractId).maybeSingle();
+  const prev = new Map(rpRows.map(r=>[r.payment_id, r.checked]));
+  rpRows = (data||[]).map(r=>({ ...r, balance: Math.round((Number(r.amount_due)-Number(r.amount_paid))*100)/100, checked: prev.get(r.payment_id) || false }))
+                     .filter(r=>r.balance > 0.004);
+  window._rpHead = head || { renter_name: (data&&data[0]?.renter_name)||'', unit_names: (data&&data[0]?.unit_name)||'' };
+  rpRender();
+}
+function rpPeriodLabel(r){
+  if((window._rpHead?.rent_period||'monthly') === 'monthly'){
+    return new Date(r.period_start + 'T00:00:00').toLocaleDateString(undefined,{month:'long', year:'numeric'});
+  }
+  return r.period_start === r.period_end ? fmtDate(r.period_start) : `${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}`;
+}
+function rpRender(){
+  const ov = document.getElementById('renterPayOverlay');
+  const h = window._rpHead || {};
+  const today = manilaToday();
+  ov.innerHTML = `
+  <div class="card" style="max-width:760px;width:100%;margin:0;">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
+      <div>
+        <p class="section-title" style="margin:0;">${bulkEsc(h.renter_name||'')}</p>
+        <p class="muted" style="margin:2px 0 0 0;">${bulkEsc(h.unit_names||'')}</p>
+      </div>
+      <button class="btn secondary small" onclick="closeRenterPay()">✕ Close</button>
+    </div>
+    <p class="muted" style="margin:10px 0 6px 0;">Tick the months that were paid. Tap <strong>up to here</strong> to tick every month from the oldest to that one.</p>
+    ${rpRows.length ? `
+    <div style="max-height:340px;overflow:auto;"><table>
+      <thead><tr><th><input type="checkbox" id="rpAll" onchange="rpToggleAll(this.checked)"></th><th>Month</th><th>Due</th><th>Balance</th><th></th></tr></thead>
+      <tbody>${rpRows.map((r,i)=>`<tr>
+        <td><input type="checkbox" ${r.checked?'checked':''} onchange="rpToggle(${i},this.checked)"></td>
+        <td>${bulkEsc(rpPeriodLabel(r))}${r.status==='partial' ? ' <span class="badge b-partial">partial</span>' : ''}</td>
+        <td>${fmtDate(r.due_date)}</td>
+        <td>${fmtMoney(r.balance)}</td>
+        <td><button class="btn secondary small" onclick="rpUpTo(${i})">up to here</button></td></tr>`).join('')}</tbody></table></div>`
+      : '<p class="muted">Nothing unpaid for this renter.</p>'}
+    <label style="display:block;margin-top:8px;"><input type="checkbox" ${rpShowUpcoming?'checked':''} onchange="rpShowUpcoming=this.checked;rpLoad()"> also show months not yet due</label>
+    <div class="row" style="margin-top:10px;">
+      <div><label>Date received</label><input id="rpDate" type="date" value="${today}" max="${today}"></div>
+      <div><label>Paid through</label><select id="rpMethod"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="maya">Maya</option><option value="bank">Bank transfer</option><option value="other">Other</option></select></div>
+      <div><label>Reference (optional)</label><input id="rpRef" placeholder="GCash / bank reference"></div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <button class="btn" id="rpSaveBtn" onclick="rpSave()" disabled>Record payment</button>
+      <span id="rpTotal" class="muted"></span>
+      <button class="btn secondary small" style="margin-left:auto;" onclick="closeRenterPay();openPaymentsForContract('${rpContractId}')">Open full schedule (partial payments)</button>
+    </div>
+  </div>`;
+  rpTotals();
+}
+function rpToggle(i,on){ rpRows[i].checked = on; rpTotals(); }
+function rpToggleAll(on){ rpRows.forEach(r=>r.checked = on); rpRender(); }
+function rpUpTo(i){ rpRows.forEach((r,k)=>r.checked = k <= i); rpRender(); }
+function rpTotals(){
+  const sel = rpRows.filter(r=>r.checked);
+  const total = sel.reduce((s,r)=>s+r.balance,0);
+  const all = document.getElementById('rpAll'); if(all) all.checked = rpRows.length > 0 && sel.length === rpRows.length;
+  document.getElementById('rpTotal').textContent = sel.length ? `${sel.length} month${sel.length===1?'':'s'} · ${fmtMoney(total)}` : '';
+  const b = document.getElementById('rpSaveBtn');
+  b.disabled = !sel.length;
+  b.textContent = sel.length ? `Record ${fmtMoney(total)} as paid` : 'Record payment';
+}
+async function rpSave(){
+  const sel = rpRows.filter(r=>r.checked);
+  if(!sel.length) return;
+  const date = document.getElementById('rpDate').value;
+  if(!date || date > manilaToday()){ alert('Choose a date received that is today or earlier.'); return; }
+  const total = sel.reduce((s,r)=>s+r.balance,0);
+  if(!confirm(`Record ${fmtMoney(total)} received ${fmtDate(date)} from ${window._rpHead?.renter_name||'this renter'} for ${sel.length} month${sel.length===1?'':'s'}?\n\nEach selected month is marked paid in full.`)) return;
+  const b = document.getElementById('rpSaveBtn'); b.disabled = true; b.textContent = 'Saving…';
+  const { data, error } = await sb.rpc('record_itemized_payment', {
+    p_rent_payment_ids: sel.map(r=>r.payment_id),
+    p_received_date: date,
+    p_method: document.getElementById('rpMethod').value,
+    p_reference: document.getElementById('rpRef').value.trim() || null,
+    p_note: 'Recorded from dashboard'
+  });
+  if(error){ alert('Nothing was saved: ' + error.message); rpLoad(); return; }
+  rpRows = [];
+  await rpLoad();
+  loadDashboard();
+  if(!rpRows.length) closeRenterPay();
+  alert(`Recorded ${fmtMoney(data?.total ?? total)} for ${data?.lines ?? sel.length} month${(data?.lines ?? sel.length)===1?'':'s'}.`);
 }
 
 // ---------- Bulk payment update ----------
