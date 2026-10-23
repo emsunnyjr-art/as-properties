@@ -48,6 +48,7 @@
   .b-pending,.b-vacant{background:rgba(143,163,179,.15);color:var(--muted);}
   tr.clickRow{cursor:pointer;}
   tr.clickRow:hover td{background:rgba(120,160,255,.08);}
+  .clickStat{cursor:pointer;} .clickStat:hover{border-color:var(--accent);} .tapHint{font-size:11px;opacity:.6;margin-top:2px;}
   .b-waived{background:rgba(150,150,150,.18);color:var(--muted,#999);}
   .b-overdue,.b-expired,.b-cancelled{background:rgba(239,91,91,.15);color:var(--bad);}
   .b-partial,.b-expiring{background:rgba(242,184,75,.15);color:var(--warn);}
@@ -109,6 +110,7 @@
   <!-- ============ DASHBOARD ============ -->
   <section id="tab-dashboard">
     <div class="grid" id="statGrid"></div>
+    <div id="statListPanel"></div>
 
     <div class="card hidden" id="proofsCard" style="border-color:var(--warn);">
       <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
@@ -1117,13 +1119,15 @@ async function loadDashboard(){
 
   const balances = await loadBalanceSummary();
   const behindCount = balances.filter(b=>Number(b.balance) > 0).length;
+  dashStat = { units, balances: balances.filter(b=>Number(b.balance) > 0), expiring: (reminders||[]).filter(r=>r.reminder_type==='contract_expiring') };
+  if(dashStatOpen) showStatList(dashStatOpen, true);
   const expiringCount = (reminders||[]).filter(r=>r.reminder_type==='contract_expiring').length;
 
   document.getElementById('statGrid').innerHTML = `
-    <div class="stat"><div class="num">${occupied}</div><div class="lbl">Occupied units</div></div>
-    <div class="stat"><div class="num">${vacant}</div><div class="lbl">Vacant units</div></div>
-    <div class="stat"><div class="num" style="color:var(--bad)">${behindCount}</div><div class="lbl">Renters with unpaid rent</div></div>
-    <div class="stat"><div class="num" style="color:var(--warn)">${expiringCount}</div><div class="lbl">Contracts expiring</div></div>
+    <div class="stat clickStat" onclick="showStatList('occupied')"><div class="num">${occupied}</div><div class="lbl">Occupied units</div><div class="tapHint">tap for list ▾</div></div>
+    <div class="stat clickStat" onclick="showStatList('vacant')"><div class="num">${vacant}</div><div class="lbl">Vacant units</div><div class="tapHint">tap for list ▾</div></div>
+    <div class="stat clickStat" onclick="showStatList('unpaid')"><div class="num" style="color:var(--bad)">${behindCount}</div><div class="lbl">Renters with unpaid rent</div><div class="tapHint">tap for list ▾</div></div>
+    <div class="stat clickStat" onclick="showStatList('expiring')"><div class="num" style="color:var(--warn)">${expiringCount}</div><div class="lbl">Contracts expiring</div><div class="tapHint">tap for list ▾</div></div>
   `;
 
   try{
@@ -3642,6 +3646,41 @@ async function pvReject(){
     ${viber ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="viber://chat?number=${viber}&text=${encodeURIComponent(data.message)}">Viber</a>` : ''}
     <button class="btn secondary small" onclick="closeProofReview()">Done</button></div>`;
   loadDashboard();
+}
+
+// ---------- Dashboard tiles: tap to see the list behind each number ----------
+let dashStat = null, dashStatOpen = null;
+async function showStatList(kind, keepOpen){
+  const panel = document.getElementById('statListPanel');
+  if(!keepOpen && dashStatOpen === kind){ dashStatOpen = null; panel.innerHTML = ''; return; }
+  dashStatOpen = kind;
+  if(!dashStat){ panel.innerHTML = ''; return; }
+  const close = '<button class="btn secondary small" onclick="showStatList(dashStatOpen)">✕ Close</button>';
+  const head = t => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><p class="section-title" style="margin:0;">${t}</p>${close}</div>`;
+  const byName = (a,b) => (a.building_name||'').localeCompare(b.building_name||'') || (a.unit_name||'').localeCompare(b.unit_name||'', undefined, {numeric:true});
+  let html = '';
+  if(kind === 'occupied'){
+    const rows = dashStat.units.filter(u=>u.occupancy==='occupied').sort(byName);
+    html = head(`Occupied units (${rows.length})`) + `<table><thead><tr><th>Unit</th><th>Building</th><th>Renter</th><th>Rent</th><th>Lease ends</th></tr></thead><tbody>${
+      rows.map(u=>`<tr><td>${bulkEsc(u.unit_name)}</td><td>${bulkEsc(u.building_name||'—')}</td><td>${bulkEsc(u.renter_name||'—')}</td><td>${u.rent_amount!=null?fmtMoney(u.rent_amount):'—'}</td><td>${u.end_date?fmtDate(u.end_date):'—'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">None.</td></tr>'}</tbody></table>`;
+  } else if(kind === 'vacant'){
+    const rows = dashStat.units.filter(u=>u.occupancy==='vacant').sort(byName);
+    const { data: pr } = await sb.from('units').select('id, price');
+    const price = {}; (pr||[]).forEach(x=>price[x.id] = x.price);
+    html = head(`Vacant units (${rows.length})`) + `<table><thead><tr><th>Unit</th><th>Building</th><th>Asking price</th></tr></thead><tbody>${
+      rows.map(u=>`<tr><td>${bulkEsc(u.unit_name)}</td><td>${bulkEsc(u.building_name||'—')}</td><td>${price[u.unit_id] ? fmtMoney(price[u.unit_id]) : '—'}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">None.</td></tr>'}</tbody></table>`;
+  } else if(kind === 'unpaid'){
+    const rows = dashStat.balances.slice().sort((a,b)=>Number(b.balance)-Number(a.balance));
+    const total = rows.reduce((t,r)=>t+Number(r.balance),0);
+    html = head(`Renters with unpaid rent (${rows.length}) — ${fmtMoney(total)}`) + `<p class="muted" style="margin:4px 0;">Tap a row to select the paid months.</p><table><thead><tr><th>Renter</th><th>Unit(s)</th><th>Unpaid</th><th>Balance</th><th>From – To</th></tr></thead><tbody>${
+      rows.map(r=>{ const n = Number(r.periods_unpaid); return `<tr class="clickRow" onclick="openRenterPay('${r.contract_id}')"><td><strong>${bulkEsc(r.renter_name)}</strong></td><td>${bulkEsc(r.unit_names||'—')}</td><td>${n} ${periodUnitLabel(r.rent_period, n)}</td><td style="color:var(--bad);font-weight:700;">${fmtMoney(r.balance)}</td><td>${bulkEsc(balanceRangeText(r))}</td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">Nobody owes rent. 🎉</td></tr>'}</tbody></table>`;
+  } else if(kind === 'expiring'){
+    const rows = dashStat.expiring.slice().sort((a,b)=>String(a.target_date).localeCompare(String(b.target_date)));
+    html = head(`Contracts expiring soon (${rows.length})`) + `<p class="muted" style="margin:4px 0;">Leases ending within 30 days.</p><table><thead><tr><th>Renter</th><th>Unit(s)</th><th>Building</th><th>Ends</th><th>Days left</th></tr></thead><tbody>${
+      rows.map(r=>`<tr><td><strong>${bulkEsc(r.renter_name)}</strong></td><td>${bulkEsc(r.unit_name||'—')}</td><td>${bulkEsc(r.building_name||'—')}</td><td>${fmtDate(r.target_date)}</td><td>${r.days_offset}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No leases are ending within 30 days.</td></tr>'}</tbody></table>`;
+  }
+  panel.innerHTML = `<div class="card" style="border-color:var(--accent);">${html}</div>`;
+  if(!keepOpen) panel.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 
 // ---------- Bulk payment update ----------
