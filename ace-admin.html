@@ -109,6 +109,7 @@
 
   <!-- ============ DASHBOARD ============ -->
   <section id="tab-dashboard">
+    <div id="vacancyLoss"></div>
     <div class="grid" id="statGrid"></div>
     <div id="statListPanel"></div>
 
@@ -1123,6 +1124,24 @@ async function loadDashboard(){
   statRefs = null;
   if(dashStatOpen) showStatList(dashStatOpen, true);
   const expiringCount = (reminders||[]).filter(r=>r.reminder_type==='contract_expiring').length;
+
+  // Vacancy loss: rent not earned because units are empty (asking price of vacant units)
+  try{
+    const { data: pr } = await sb.from('units').select('id, price');
+    const price = Object.fromEntries((pr||[]).map(x=>[x.id, Number(x.price)||0]));
+    const vacRows = units.filter(u=>u.occupancy==='vacant');
+    const lost = vacRows.reduce((t,u)=>t+(price[u.unit_id]||0),0);
+    const noPrice = vacRows.filter(u=>!price[u.unit_id]).length;
+    const earning = units.filter(u=>u.occupancy==='occupied').reduce((t,u)=>t+(Number(u.rent_amount)||0),0);
+    const potential = earning + lost;
+    const pct = potential ? (lost/potential*100) : 0;
+    const el = document.getElementById('vacancyLoss');
+    el.innerHTML = vacRows.length ? `<div class="stat clickStat" style="margin-bottom:12px;text-align:left;" onclick="showStatList('vacant')">
+      <span class="lbl">Rent lost to vacancy</span>
+      <span class="num" style="color:var(--bad);font-size:1.4em;margin-left:8px;">${fmtMoney(lost)}</span><span class="lbl"> / month</span>
+      <span class="num" style="color:var(--bad);font-size:1.4em;margin-left:12px;">${pct.toFixed(1)}%</span><span class="lbl"> of ${fmtMoney(potential)} potential</span>
+      ${noPrice ? `<div class="tapHint">${noPrice} vacant unit${noPrice>1?'s have':' has'} no asking price set, so the real loss is higher</div>` : `<div class="tapHint">tap for the vacant list ▾</div>`}</div>` : '';
+  }catch(e){ console.error(e); }
 
   document.getElementById('statGrid').innerHTML = `
     <div class="stat clickStat" onclick="showStatList('occupied')"><div class="num">${occupied}</div><div class="lbl">Occupied units</div><div class="tapHint">tap for list ▾</div></div>
