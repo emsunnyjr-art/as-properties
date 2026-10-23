@@ -1120,6 +1120,7 @@ async function loadDashboard(){
   const balances = await loadBalanceSummary();
   const behindCount = balances.filter(b=>Number(b.balance) > 0).length;
   dashStat = { units, balances: balances.filter(b=>Number(b.balance) > 0), expiring: (reminders||[]).filter(r=>r.reminder_type==='contract_expiring') };
+  statRefs = null;
   if(dashStatOpen) showStatList(dashStatOpen, true);
   const expiringCount = (reminders||[]).filter(r=>r.reminder_type==='contract_expiring').length;
 
@@ -3648,39 +3649,125 @@ async function pvReject(){
   loadDashboard();
 }
 
-// ---------- Dashboard tiles: tap to see the list behind each number ----------
-let dashStat = null, dashStatOpen = null;
+// ---------- Dashboard tiles: tap to see the list behind each number (with filters + building summary) ----------
+let dashStat = null, dashStatOpen = null, statRefs = null, statRows = [];
+let statF = { loc:'', bld:'', q:'', view:'list' };
+
+async function statEnsureRefs(){
+  if(statRefs) return statRefs;
+  const [{ data: locs }, { data: blds }, { data: prices }] = await Promise.all([
+    sb.from('locations').select('id, name').order('name'),
+    sb.from('buildings').select('id, name, location_id').order('name'),
+    sb.from('units').select('id, price')
+  ]);
+  statRefs = { locs: locs||[], blds: blds||[], bmap: Object.fromEntries((blds||[]).map(b=>[b.id,b])),
+               price: Object.fromEntries((prices||[]).map(x=>[x.id, Number(x.price)||0])) };
+  return statRefs;
+}
+async function statContractBuildings(ids){
+  const out = {};
+  for(let i=0;i<ids.length;i+=200){
+    const { data } = await sb.from('contract_units').select('contract_id, units(building_id)').in('contract_id', ids.slice(i,i+200));
+    (data||[]).forEach(r=>{ if(!out[r.contract_id] && r.units) out[r.contract_id] = r.units.building_id; });
+  }
+  return out;
+}
+async function statBuildRows(kind){
+  const R = await statEnsureRefs();
+  const bn = id => (R.bmap[id]||{}).name || '';
+  const lid = id => (R.bmap[id]||{}).location_id || '';
+  if(kind === 'occupied') return dashStat.units.filter(u=>u.occupancy==='occupied').map(u=>({ bid:u.building_id||'', lid:u.location_id||lid(u.building_id), bname:u.building_name||bn(u.building_id), value:Number(u.rent_amount)||0, u }));
+  if(kind === 'vacant')   return dashStat.units.filter(u=>u.occupancy==='vacant').map(u=>({ bid:u.building_id||'', lid:u.location_id||lid(u.building_id), bname:u.building_name||bn(u.building_id), value:R.price[u.unit_id]||0, u, price:R.price[u.unit_id]||0 }));
+  if(kind === 'unpaid'){
+    const m = await statContractBuildings(dashStat.balances.map(b=>b.contract_id));
+    return dashStat.balances.map(r=>({ bid:m[r.contract_id]||'', lid:lid(m[r.contract_id]), bname:bn(m[r.contract_id]), value:Number(r.balance)||0, r }));
+  }
+  const m = await statContractBuildings(dashStat.expiring.map(r=>r.contract_id));
+  return dashStat.expiring.map(r=>({ bid:m[r.contract_id]||'', lid:lid(m[r.contract_id]), bname:r.building_name||bn(m[r.contract_id]), value:1, r }));
+}
+const STAT_TITLES = { occupied:'Occupied units', vacant:'Vacant units', unpaid:'Renters with unpaid rent', expiring:'Contracts expiring soon (within 30 days)' };
+const STAT_VALUE  = { occupied:'Monthly rent', vacant:'Asking price total', unpaid:'Unpaid balance', expiring:'Contracts' };
+const STAT_COUNT  = { occupied:'Units', vacant:'Units', unpaid:'Renters', expiring:'Contracts' };
+
 async function showStatList(kind, keepOpen){
   const panel = document.getElementById('statListPanel');
   if(!keepOpen && dashStatOpen === kind){ dashStatOpen = null; panel.innerHTML = ''; return; }
-  dashStatOpen = kind;
   if(!dashStat){ panel.innerHTML = ''; return; }
-  const close = '<button class="btn secondary small" onclick="showStatList(dashStatOpen)">✕ Close</button>';
-  const head = t => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><p class="section-title" style="margin:0;">${t}</p>${close}</div>`;
-  const byName = (a,b) => (a.building_name||'').localeCompare(b.building_name||'') || (a.unit_name||'').localeCompare(b.unit_name||'', undefined, {numeric:true});
-  let html = '';
-  if(kind === 'occupied'){
-    const rows = dashStat.units.filter(u=>u.occupancy==='occupied').sort(byName);
-    html = head(`Occupied units (${rows.length})`) + `<table><thead><tr><th>Unit</th><th>Building</th><th>Renter</th><th>Rent</th><th>Lease ends</th></tr></thead><tbody>${
-      rows.map(u=>`<tr><td>${bulkEsc(u.unit_name)}</td><td>${bulkEsc(u.building_name||'—')}</td><td>${bulkEsc(u.renter_name||'—')}</td><td>${u.rent_amount!=null?fmtMoney(u.rent_amount):'—'}</td><td>${u.end_date?fmtDate(u.end_date):'—'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">None.</td></tr>'}</tbody></table>`;
-  } else if(kind === 'vacant'){
-    const rows = dashStat.units.filter(u=>u.occupancy==='vacant').sort(byName);
-    const { data: pr } = await sb.from('units').select('id, price');
-    const price = {}; (pr||[]).forEach(x=>price[x.id] = x.price);
-    html = head(`Vacant units (${rows.length})`) + `<table><thead><tr><th>Unit</th><th>Building</th><th>Asking price</th></tr></thead><tbody>${
-      rows.map(u=>`<tr><td>${bulkEsc(u.unit_name)}</td><td>${bulkEsc(u.building_name||'—')}</td><td>${price[u.unit_id] ? fmtMoney(price[u.unit_id]) : '—'}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">None.</td></tr>'}</tbody></table>`;
-  } else if(kind === 'unpaid'){
-    const rows = dashStat.balances.slice().sort((a,b)=>Number(b.balance)-Number(a.balance));
-    const total = rows.reduce((t,r)=>t+Number(r.balance),0);
-    html = head(`Renters with unpaid rent (${rows.length}) — ${fmtMoney(total)}`) + `<p class="muted" style="margin:4px 0;">Tap a row to select the paid months.</p><table><thead><tr><th>Renter</th><th>Unit(s)</th><th>Unpaid</th><th>Balance</th><th>From – To</th></tr></thead><tbody>${
-      rows.map(r=>{ const n = Number(r.periods_unpaid); return `<tr class="clickRow" onclick="openRenterPay('${r.contract_id}')"><td><strong>${bulkEsc(r.renter_name)}</strong></td><td>${bulkEsc(r.unit_names||'—')}</td><td>${n} ${periodUnitLabel(r.rent_period, n)}</td><td style="color:var(--bad);font-weight:700;">${fmtMoney(r.balance)}</td><td>${bulkEsc(balanceRangeText(r))}</td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">Nobody owes rent. 🎉</td></tr>'}</tbody></table>`;
-  } else if(kind === 'expiring'){
-    const rows = dashStat.expiring.slice().sort((a,b)=>String(a.target_date).localeCompare(String(b.target_date)));
-    html = head(`Contracts expiring soon (${rows.length})`) + `<p class="muted" style="margin:4px 0;">Leases ending within 30 days.</p><table><thead><tr><th>Renter</th><th>Unit(s)</th><th>Building</th><th>Ends</th><th>Days left</th></tr></thead><tbody>${
-      rows.map(r=>`<tr><td><strong>${bulkEsc(r.renter_name)}</strong></td><td>${bulkEsc(r.unit_name||'—')}</td><td>${bulkEsc(r.building_name||'—')}</td><td>${fmtDate(r.target_date)}</td><td>${r.days_offset}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No leases are ending within 30 days.</td></tr>'}</tbody></table>`;
-  }
-  panel.innerHTML = `<div class="card" style="border-color:var(--accent);">${html}</div>`;
+  if(dashStatOpen !== kind && !keepOpen) statF.q = '';
+  dashStatOpen = kind;
+  panel.innerHTML = '<div class="card" style="border-color:var(--accent);"><p class="muted">Loading…</p></div>';
+  statRows = await statBuildRows(kind);
+  statRenderControls();
+  statRenderBody();
   if(!keepOpen) panel.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+function statRenderControls(){
+  const R = statRefs, kind = dashStatOpen;
+  const blds = R.blds.filter(b=>!statF.loc || b.location_id === statF.loc);
+  document.getElementById('statListPanel').innerHTML = `<div class="card" style="border-color:var(--accent);">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <p class="section-title" style="margin:0;" id="statTitle"></p>
+      <button class="btn secondary small" onclick="showStatList(dashStatOpen)">✕ Close</button>
+    </div>
+    <div class="row" style="margin:8px 0;align-items:flex-end;">
+      <div><label>Location</label><select onchange="statSet('loc',this.value)"><option value="">All locations</option>${R.locs.map(l=>`<option value="${l.id}" ${statF.loc===l.id?'selected':''}>${bulkEsc(l.name)}</option>`).join('')}</select></div>
+      <div><label>Building</label><select onchange="statSet('bld',this.value)"><option value="">All buildings</option>${blds.map(b=>`<option value="${b.id}" ${statF.bld===b.id?'selected':''}>${bulkEsc(b.name)}</option>`).join('')}</select></div>
+      <div><label>Search</label><input id="statQ" value="${bulkEsc(statF.q)}" placeholder="name or unit" oninput="statF.q=this.value;statRenderBody()"></div>
+      <div style="flex:0 0 auto;"><label>View</label>
+        <button class="btn small ${statF.view==='list'?'':'secondary'}" onclick="statSet('view','list')">List</button>
+        <button class="btn small ${statF.view==='summary'?'':'secondary'}" onclick="statSet('view','summary')">By building</button></div>
+    </div>
+    <div id="statBody"></div></div>`;
+}
+function statSet(k, v){
+  statF[k] = v;
+  if(k === 'loc' && statF.bld && statRefs.bmap[statF.bld] && v && statRefs.bmap[statF.bld].location_id !== v) statF.bld = '';
+  statRenderControls(); statRenderBody();
+}
+function statFiltered(){
+  const q = (statF.q||'').trim().toLowerCase();
+  return statRows.filter(x=>{
+    if(statF.loc && x.lid !== statF.loc) return false;
+    if(statF.bld && x.bid !== statF.bld) return false;
+    if(q){
+      const o = x.u || x.r || {};
+      const hay = `${o.unit_name||''} ${o.unit_names||''} ${o.renter_name||''} ${x.bname||''}`.toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+function statRenderBody(){
+  const kind = dashStatOpen, rows = statFiltered(), body = document.getElementById('statBody');
+  if(!body) return;
+  const money = kind !== 'expiring';
+  const total = rows.reduce((t,x)=>t+x.value,0);
+  document.getElementById('statTitle').textContent = `${STAT_TITLES[kind]} (${rows.length})` + (money && rows.length ? ` — ${fmtMoney(total)}` : '');
+
+  if(statF.view === 'summary'){
+    const g = new Map();
+    rows.forEach(x=>{ const k = x.bid || ''; if(!g.has(k)) g.set(k, { bid:k, name:x.bname||'(no building set)', n:0, sum:0 }); const e = g.get(k); e.n++; e.sum += x.value; });
+    const list = [...g.values()].sort((a,b)=>a.name.localeCompare(b.name));
+    body.innerHTML = `<table><thead><tr><th>Building</th><th>${STAT_COUNT[kind]}</th>${money?`<th>${STAT_VALUE[kind]}</th>`:''}</tr></thead><tbody>${
+      list.map(e=>`<tr class="clickRow" onclick="statF.bld='${e.bid}';statF.view='list';statRenderControls();statRenderBody();"><td>${bulkEsc(e.name)}</td><td>${e.n}</td>${money?`<td>${fmtMoney(e.sum)}</td>`:''}</tr>`).join('') || `<tr><td colspan="3" class="muted">Nothing matches.</td></tr>`}
+      ${list.length ? `<tr><td><strong>Total</strong></td><td><strong>${rows.length}</strong></td>${money?`<td><strong>${fmtMoney(total)}</strong></td>`:''}</tr>` : ''}</tbody></table>
+      <p class="muted" style="margin:6px 0 0;">Tap a building to see its list.</p>`;
+    return;
+  }
+  const cmp = (a,b)=> (a.bname||'').localeCompare(b.bname||'') || ((a.u||{}).unit_name||'').localeCompare(((b.u||{}).unit_name||''), undefined, {numeric:true});
+  if(kind === 'occupied'){
+    body.innerHTML = `<table><thead><tr><th>Unit</th><th>Building</th><th>Renter</th><th>Rent</th><th>Lease ends</th></tr></thead><tbody>${
+      rows.sort(cmp).map(x=>{ const u=x.u; return `<tr><td>${bulkEsc(u.unit_name)}</td><td>${bulkEsc(x.bname||'—')}</td><td>${bulkEsc(u.renter_name||'—')}</td><td>${u.rent_amount!=null?fmtMoney(u.rent_amount):'—'}</td><td>${u.end_date?fmtDate(u.end_date):'—'}</td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">Nothing matches.</td></tr>'}</tbody></table>`;
+  } else if(kind === 'vacant'){
+    body.innerHTML = `<table><thead><tr><th>Unit</th><th>Building</th><th>Asking price</th></tr></thead><tbody>${
+      rows.sort(cmp).map(x=>`<tr><td>${bulkEsc(x.u.unit_name)}</td><td>${x.bname?bulkEsc(x.bname):'<span class="muted">— not set</span>'}</td><td>${x.price?fmtMoney(x.price):'—'}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Nothing matches.</td></tr>'}</tbody></table>`;
+  } else if(kind === 'unpaid'){
+    body.innerHTML = `<p class="muted" style="margin:0 0 4px;">Tap a row to select the paid months.</p><table><thead><tr><th>Renter</th><th>Unit(s)</th><th>Building</th><th>Unpaid</th><th>Balance</th><th>From – To</th></tr></thead><tbody>${
+      rows.sort((a,b)=>b.value-a.value).map(x=>{ const r=x.r, n=Number(r.periods_unpaid); return `<tr class="clickRow" onclick="openRenterPay('${r.contract_id}')"><td><strong>${bulkEsc(r.renter_name)}</strong></td><td>${bulkEsc(r.unit_names||'—')}</td><td>${bulkEsc(x.bname||'—')}</td><td>${n} ${periodUnitLabel(r.rent_period, n)}</td><td style="color:var(--bad);font-weight:700;">${fmtMoney(r.balance)}</td><td>${bulkEsc(balanceRangeText(r))}</td></tr>`; }).join('') || '<tr><td colspan="6" class="muted">Nothing matches.</td></tr>'}</tbody></table>`;
+  } else {
+    body.innerHTML = `<table><thead><tr><th>Renter</th><th>Unit(s)</th><th>Building</th><th>Ends</th><th>Days left</th></tr></thead><tbody>${
+      rows.sort((a,b)=>String(a.r.target_date).localeCompare(String(b.r.target_date))).map(x=>{ const r=x.r; return `<tr><td><strong>${bulkEsc(r.renter_name)}</strong></td><td>${bulkEsc(r.unit_name||'—')}</td><td>${bulkEsc(x.bname||'—')}</td><td>${fmtDate(r.target_date)}</td><td>${r.days_offset}</td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">No leases are ending within 30 days.</td></tr>'}</tbody></table>`;
+  }
 }
 
 // ---------- Bulk payment update ----------
