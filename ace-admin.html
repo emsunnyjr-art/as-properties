@@ -1132,15 +1132,15 @@ async function loadDashboard(){
     const vacRows = units.filter(u=>u.occupancy==='vacant');
     const lost = vacRows.reduce((t,u)=>t+(price[u.unit_id]||0),0);
     const noPrice = vacRows.filter(u=>!price[u.unit_id]).length;
-    const earning = units.filter(u=>u.occupancy==='occupied').reduce((t,u)=>t+(Number(u.rent_amount)||0),0);
+    const seenC = new Set(); let earning = 0;   // a contract covering several units is counted once
+    units.filter(u=>u.occupancy==='occupied').forEach(u=>{ if(!seenC.has(u.active_contract_id)){ seenC.add(u.active_contract_id); earning += Number(u.rent_amount)||0; } });
     const potential = earning + lost;
     const pct = potential ? (lost/potential*100) : 0;
     const el = document.getElementById('vacancyLoss');
-    el.innerHTML = vacRows.length ? `<div class="stat clickStat" style="margin-bottom:12px;text-align:left;" onclick="showStatList('vacant')">
-      <span class="lbl">Rent lost to vacancy</span>
-      <span class="num" style="color:var(--bad);font-size:1.4em;margin-left:8px;">${fmtMoney(lost)}</span><span class="lbl"> / month</span>
-      <span class="num" style="color:var(--bad);font-size:1.4em;margin-left:12px;">${pct.toFixed(1)}%</span><span class="lbl"> of ${fmtMoney(potential)} potential</span>
-      ${noPrice ? `<div class="tapHint">${noPrice} vacant unit${noPrice>1?'s have':' has'} no asking price set, so the real loss is higher</div>` : `<div class="tapHint">tap for the vacant list ▾</div>`}</div>` : '';
+    const lossPart = vacRows.length ? `<span style="margin-left:18px;"><span class="lbl">Lost to vacancy</span> <span class="num" style="color:var(--bad);font-size:1.4em;">${fmtMoney(lost)}</span> <span class="num" style="color:var(--bad);font-size:1.4em;">(${pct.toFixed(1)}%)</span></span>` : '';
+    el.innerHTML = `<div class="stat clickStat" style="margin-bottom:12px;text-align:left;" onclick="showStatList('${vacRows.length?'vacant':'occupied'}')">
+      <span class="lbl">Monthly rent from rented units</span> <span class="num" style="color:var(--good,#1a7f37);font-size:1.4em;">${fmtMoney(earning)}</span>${lossPart}
+      <div class="tapHint">${vacRows.length ? `potential ${fmtMoney(potential)} if all rented` + (noPrice ? ` · ${noPrice} vacant unit${noPrice>1?'s have':' has'} no asking price, so the loss is higher` : '') : 'all units rented'}</div></div>`;
   }catch(e){ console.error(e); }
 
   document.getElementById('statGrid').innerHTML = `
@@ -3695,7 +3695,10 @@ async function statBuildRows(kind){
   const R = await statEnsureRefs();
   const bn = id => (R.bmap[id]||{}).name || '';
   const lid = id => (R.bmap[id]||{}).location_id || '';
-  if(kind === 'occupied') return dashStat.units.filter(u=>u.occupancy==='occupied').map(u=>({ bid:u.building_id||'', lid:u.location_id||lid(u.building_id), bname:u.building_name||bn(u.building_id), value:Number(u.rent_amount)||0, u }));
+  if(kind === 'occupied'){
+    const cnt = {}; dashStat.units.filter(u=>u.occupancy==='occupied').forEach(u=>cnt[u.active_contract_id]=(cnt[u.active_contract_id]||0)+1);
+    return dashStat.units.filter(u=>u.occupancy==='occupied').map(u=>({ bid:u.building_id||'', lid:u.location_id||lid(u.building_id), bname:u.building_name||bn(u.building_id), value:(Number(u.rent_amount)||0)/(cnt[u.active_contract_id]||1), u }));
+  }
   if(kind === 'vacant')   return dashStat.units.filter(u=>u.occupancy==='vacant').map(u=>({ bid:u.building_id||'', lid:u.location_id||lid(u.building_id), bname:u.building_name||bn(u.building_id), value:R.price[u.unit_id]||0, u, price:R.price[u.unit_id]||0 }));
   if(kind === 'unpaid'){
     const m = await statContractBuildings(dashStat.balances.map(b=>b.contract_id));
