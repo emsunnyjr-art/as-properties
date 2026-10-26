@@ -60,6 +60,28 @@
   .hidden{display:none !important;}
   .section-title{font-size:15px;font-weight:700;margin:0 0 12px 0;}
   #configBanner{background:var(--warn);color:#221a05;padding:10px 16px;font-size:13px;}
+
+  .homeTop{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:12px;}
+  .moneyCard{margin:0;} .moneyCard .big{font-size:38px;font-weight:800;line-height:1.1;margin:2px 0 8px;}
+  .bar{height:10px;background:var(--panel2);border-radius:6px;overflow:hidden;} .bar>div{height:100%;background:var(--good);border-radius:6px;}
+  .homeTiles{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .homeTile{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px;cursor:pointer;}
+  .homeTile:hover{border-color:var(--accent);} .homeTile .n{font-size:32px;font-weight:800;line-height:1.1;} .homeTile .l{font-size:15px;margin-top:4px;} .homeTile .s{font-size:13px;color:var(--muted);}
+  .homeCols{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;align-items:start;}
+  .hcard{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:14px;margin-top:10px;}
+  .hcard .top{display:flex;justify-content:space-between;gap:10px;align-items:baseline;} .hcard .nm{font-size:16px;font-weight:700;} .hcard .amt{font-size:20px;font-weight:800;white-space:nowrap;}
+  .hcard .sub{font-size:14px;color:var(--muted);margin:2px 0 6px;}
+  .hcard .acts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;}
+  button.btn.big,a.lnkbtn{min-height:48px;font-size:15px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:600;}
+  a.lnkbtn{background:var(--panel);color:var(--text);border:1px solid var(--border);}
+  .tagw{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:700;background:rgba(242,184,75,.15);color:var(--warn);}
+  .seeAll{color:var(--accent);font-size:14px;text-decoration:none;}
+  .alsoRow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:15px;} .alsoRow:last-child{border-bottom:none;}
+  details#reportsBox{max-width:100%;overflow:hidden;} details#reportsBox canvas{max-width:100%;}
+  details#reportsBox>summary{list-style:none;} details#reportsBox>summary::before{content:"▸ ";} details#reportsBox[open]>summary::before{content:"▾ ";}
+  @media (min-width:900px){ .homeTop{grid-template-columns:2fr 1fr;} .homeTiles{grid-template-columns:1fr 1fr;} }
+#toTopBtn{position:fixed;right:16px;bottom:16px;width:44px;height:44px;border-radius:50%;border:0;background:var(--accent);color:#04121e;font-size:20px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);display:none;z-index:50;}
+#toTopBtn.show{display:block;}
 </style>
 </head>
 <body>
@@ -109,40 +131,53 @@
 
   <!-- ============ DASHBOARD ============ -->
   <section id="tab-dashboard">
-    <div id="vacancyLoss"></div>
-    <div class="grid" id="statGrid"></div>
+    <div class="homeTop">
+      <div class="card moneyCard" id="homeMoney"><p class="muted">Loading…</p></div>
+      <div class="homeTiles" id="homeTiles"></div>
+    </div>
     <div id="statListPanel"></div>
 
-    <div class="card hidden" id="proofsCard" style="border-color:var(--warn);">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
-        <p class="section-title" style="margin:0;">📥 Payment proofs waiting for you <span id="proofsCount"></span></p>
-        <button class="btn secondary small" onclick="toggleProofSettings()">🔔 Alerts</button>
+    <div class="homeCols">
+      <div class="card hidden" id="proofsCard" style="border-color:var(--warn);">
+        <p class="section-title">Needs your approval <span id="proofsCount"></span></p>
+        <p class="muted" style="margin-top:-6px;">Nothing is marked paid until you approve. Check your GCash or bank account first.</p>
+        <div id="proofsTable"></div>
       </div>
-      <div id="proofSettings" class="hidden" style="margin:8px 0;">
-        <p class="muted">Get a message on your own phone or email each time a renter sends proof of payment.</p>
-        <div class="row">
-          <div><label>My email</label><input id="ownerEmail" type="email" placeholder="you@example.com"></div>
-          <div><label>My mobile (SMS)</label><input id="ownerPhone" placeholder="09XX XXX XXXX"></div>
+      <div class="card hidden" id="overdueCard">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;">
+          <p class="section-title" style="margin:0;">Overdue</p>
+          <a href="#" class="seeAll" id="overdueSeeAll" onclick="showStatList('unpaid');return false;"></a>
         </div>
-        <button class="btn small" onclick="saveProofSettings()">Save</button>
+        <div id="overdueCards"></div>
       </div>
-      <p class="muted">Nothing is marked paid until you approve. Check your GCash / bank account first, then approve or reject.</p>
-      <table>
-        <thead><tr><th>Renter</th><th>Amount</th><th>Reference</th><th>Receipt date</th><th>Checks</th><th></th></tr></thead>
-        <tbody id="proofsTable"></tbody>
-      </table>
     </div>
 
+    <div class="card" id="alsoWeek"></div>
+
+    <details class="card" id="reportsBox">
+      <summary class="section-title" style="cursor:pointer;margin:0;">Reports and settings</summary>
+      <div style="margin-top:12px;">
+        <div class="card" style="background:var(--panel2);">
+          <p class="section-title">Alerts</p>
+          <p class="muted">Get a message on your own phone or email each time a renter sends proof of payment.</p>
+          <div class="row">
+            <div><label>My email</label><input id="ownerEmail" type="email" placeholder="you@example.com"></div>
+            <div><label>My mobile (SMS)</label><input id="ownerPhone" placeholder="09XX XXX XXXX"></div>
+          </div>
+          <button class="btn big" onclick="saveProofSettings()">Save alerts</button>
+        </div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
         <p class="section-title" style="margin:0;">Unpaid balances — active contracts</p>
         <p style="margin:0;font-weight:700;" id="balanceTotalLabel"></p>
       </div>
       <p class="muted">Rent already due and not yet paid, per renter, with the first and last unpaid month. A lease that has passed its end date with no newer contract keeps running on the same terms.</p>
+      <div style="overflow-x:auto;">
       <table>
         <thead><tr><th>Renter</th><th>Unit(s)</th><th>Unpaid</th><th>Balance</th><th>From – To</th><th></th></tr></thead>
         <tbody id="balanceTable"></tbody>
       </table>
+      </div>
     </div>
 
     <div class="card">
@@ -185,6 +220,8 @@
       <p class="muted" id="reminderEmpty">Nothing pending right now.</p>
       <div id="reminderList"></div>
     </div>
+        </div>
+    </details>
   </section>
 
   <!-- ============ PROPERTIES ============ -->
@@ -501,6 +538,10 @@
 
 </main>
 
+<button id="toTopBtn" title="Back to top" aria-label="Back to top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
+<script>
+window.addEventListener('scroll',function(){var b=document.getElementById('toTopBtn');if(b)b.classList.toggle('show',window.scrollY>400);},{passive:true});
+</script>
 <script>
 // =====================================================================
 // CONFIG — fill these in from your Supabase project settings
@@ -1084,7 +1125,7 @@ async function loadBalanceSummary(){
     const label = periodUnitLabel(r.rent_period, n);
     const range = balanceRangeText(r);
     const msg = `Hi ${r.renter_name}, your unpaid rent for ${r.unit_names} is ${fmtMoney(r.balance)} for ${n} ${label} (${range}). Kindly settle at your earliest convenience.${payText}`;
-    balanceContextMap[r.contract_id] = { amount: r.balance, renterName: r.renter_name, unitName: r.unit_names };
+    balanceContextMap[r.contract_id] = { amount: r.balance, renterName: r.renter_name, unitName: r.unit_names, msg, contact: r.contact_number };
     return `
       <tr class="clickRow" onclick="balanceRowClick(event,'${r.contract_id}')" title="Click to select months and record payment">
         <td><strong>${r.renter_name}</strong>${r.status==='cancelled' ? '<br><span class="badge b-cancelled">cancelled · recovering</span>' : ''}${r.past_end_date ? `<br><span class="badge b-expiring" title="No newer contract is on file, so the same terms continue">Lease ended ${fmtDate(r.end_date)} · continuing</span>` : ''}</td>
@@ -1125,7 +1166,7 @@ async function loadDashboard(){
   if(dashStatOpen) showStatList(dashStatOpen, true);
   const expiringCount = (reminders||[]).filter(r=>r.reminder_type==='contract_expiring').length;
 
-  // Vacancy loss: rent not earned because units are empty (asking price of vacant units)
+  // ----- Home: money card, tiles, overdue cards, "also this week" -----
   try{
     const { data: pr } = await sb.from('units').select('id, price');
     const price = Object.fromEntries((pr||[]).map(x=>[x.id, Number(x.price)||0]));
@@ -1134,21 +1175,50 @@ async function loadDashboard(){
     const noPrice = vacRows.filter(u=>!price[u.unit_id]).length;
     const seenC = new Set(); let earning = 0;   // a contract covering several units is counted once
     units.filter(u=>u.occupancy==='occupied').forEach(u=>{ if(!seenC.has(u.active_contract_id)){ seenC.add(u.active_contract_id); earning += Number(u.rent_amount)||0; } });
-    const potential = earning + lost;
-    const pct = potential ? (lost/potential*100) : 0;
-    const el = document.getElementById('vacancyLoss');
-    const lossPart = vacRows.length ? `<span style="margin-left:18px;"><span class="lbl">Lost to vacancy</span> <span class="num" style="color:var(--bad);font-size:1.4em;">${fmtMoney(lost)}</span> <span class="num" style="color:var(--bad);font-size:1.4em;">(${pct.toFixed(1)}%)</span></span>` : '';
-    el.innerHTML = `<div class="stat clickStat" style="margin-bottom:12px;text-align:left;" onclick="showStatList('${vacRows.length?'vacant':'occupied'}')">
-      <span class="lbl">Monthly rent from rented units</span> <span class="num" style="color:var(--good,#1a7f37);font-size:1.4em;">${fmtMoney(earning)}</span>${lossPart}
-      <div class="tapHint">${vacRows.length ? `potential ${fmtMoney(potential)} if all rented` + (noPrice ? ` · ${noPrice} vacant unit${noPrice>1?'s have':' has'} no asking price, so the loss is higher` : '') : 'all units rented'}</div></div>`;
-  }catch(e){ console.error(e); }
 
-  document.getElementById('statGrid').innerHTML = `
-    <div class="stat clickStat" onclick="showStatList('occupied')"><div class="num">${occupied}</div><div class="lbl">Occupied units</div><div class="tapHint">tap for list ▾</div></div>
-    <div class="stat clickStat" onclick="showStatList('vacant')"><div class="num">${vacant}</div><div class="lbl">Vacant units</div><div class="tapHint">tap for list ▾</div></div>
-    <div class="stat clickStat" onclick="showStatList('unpaid')"><div class="num" style="color:var(--bad)">${behindCount}</div><div class="lbl">Renters with unpaid rent</div><div class="tapHint">tap for list ▾</div></div>
-    <div class="stat clickStat" onclick="showStatList('expiring')"><div class="num" style="color:var(--warn)">${expiringCount}</div><div class="lbl">Contracts expiring</div><div class="tapHint">tap for list ▾</div></div>
-  `;
+    // rent for this month's periods: collected so far vs due (same basis as the monthly chart)
+    const today = manilaToday(), mStart = today.slice(0,8) + '01';
+    const { data: mrow } = await sb.from('v_monthly_collection').select('total_due, total_paid').eq('month', mStart);
+    const got = Number((mrow&&mrow[0]||{}).total_paid)||0;
+    const dueMonth = Number((mrow&&mrow[0]||{}).total_due)||0;
+    const pctBar = dueMonth > 0 ? Math.min(100, Math.max(0, got/dueMonth*100)) : 0;
+    const monthName = new Date(mStart+'T00:00:00').toLocaleDateString('en-PH',{month:'long', year:'numeric'});
+    document.getElementById('homeMoney').innerHTML = `
+      <div class="muted" style="font-size:14px;">Collected this month · ${monthName}</div>
+      <div class="big">${fmtMoney(got)}</div>
+      <div class="bar"><div style="width:${pctBar}%"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;margin-top:6px;color:var(--muted);"><span>of ${fmtMoney(dueMonth)} rent due this month</span><span>${Math.round(pctBar)}%</span></div>
+      <div style="margin-top:10px;font-size:14px;color:var(--muted);cursor:pointer;" onclick="showStatList('occupied')">Rent roll ${fmtMoney(earning)} a month from ${occupied} rented unit${occupied===1?'':'s'} · tap for list</div>`;
+
+    const owed = dashStat.balances.reduce((t,r)=>t+Number(r.balance),0);
+    document.getElementById('homeTiles').innerHTML = `
+      <div class="homeTile" onclick="showStatList('unpaid')"><div class="n" style="color:var(--bad);">${behindCount}</div><div class="l">Overdue</div><div class="s">${fmtMoney(owed)} owed</div></div>
+      <div class="homeTile" onclick="document.getElementById('proofsCard').scrollIntoView({behavior:'smooth'})"><div class="n" style="color:var(--warn);" id="tileProofsNum">${window.__proofCount||0}</div><div class="l">Waiting for you</div><div class="s">payment proofs</div></div>`;
+
+    // Overdue: top 3 by amount, one card each
+    const oc = document.getElementById('overdueCard');
+    const top = dashStat.balances.slice().sort((a,b)=>Number(b.balance)-Number(a.balance));
+    oc.classList.toggle('hidden', top.length === 0);
+    document.getElementById('overdueSeeAll').textContent = top.length > 3 ? `See all ${top.length}` : '';
+    document.getElementById('overdueCards').innerHTML = top.slice(0,3).map(r=>{
+      const n = Number(r.periods_unpaid), ctx = balanceContextMap[r.contract_id] || {};
+      return `<div class="hcard">
+        <div class="top"><div class="nm">${bulkEsc(r.renter_name)}</div><div class="amt" style="color:var(--bad);">${fmtMoney(r.balance)}</div></div>
+        <div class="sub">${bulkEsc(r.unit_names||'—')} · ${n} ${periodUnitLabel(r.rent_period, n)} unpaid</div>
+        <div class="acts">
+          ${r.contact_number ? `<a class="lnkbtn" href="${smsHref(r.contact_number, ctx.msg||'')}">Message</a>` : '<span></span>'}
+          <button class="btn big" onclick="openRenterPay('${r.contract_id}')">Record payment</button>
+        </div></div>`;
+    }).join('');
+
+    // Also this week
+    const aw = [];
+    if(expiringCount) aw.push(`<div class="alsoRow"><span>${expiringCount} lease${expiringCount===1?'':'s'} ending soon</span><button class="btn secondary small" onclick="showStatList('expiring')">View</button></div>`);
+    if(vacRows.length) aw.push(`<div class="alsoRow"><span>${vacRows.length} vacant unit${vacRows.length===1?'':'s'} · ${fmtMoney(lost)} a month not earned${noPrice ? ` <span class="muted">(${noPrice} with no asking price)</span>` : ''}</span><button class="btn secondary small" onclick="showStatList('vacant')">View</button></div>`);
+    const awEl = document.getElementById('alsoWeek');
+    awEl.classList.toggle('hidden', aw.length === 0);
+    awEl.innerHTML = '<p class="section-title" style="margin-bottom:4px;">Also this week</p>' + aw.join('');
+  }catch(e){ console.error(e); }
 
   try{
     await loadCollectionCharts();
@@ -2829,7 +2899,7 @@ function contractRowHtml(c, unitNames, opts){
         ${(c.signed_file_path || c.advance_proof_path || c.deposit_proof_path) ? `<button class="btn secondary small" onclick="sendContractFiles('${c.id}')">📤 Send files</button>` : ''}
         ${c.signed_at
           ? `<button class="btn small" style="background:var(--good);" onclick="viewSignature('${c.id}')">✅ Signed</button>`
-          : `<button class="btn secondary small" onclick="sendForSignature('${c.id}')">✍️ Send for signature</button>`}
+          : (c.status==='active' && !c.signed_file_path ? `<button class="btn secondary small" onclick="sendForSignature('${c.id}')">✍️ Send for signature</button>` : '')}
         ${c.status==='active' ? `<button class="btn danger small" onclick="cancelContract('${c.id}')">Cancel</button>` : ''}
         ${c.status==='cancelled' ? (c.recover_dues
             ? `<button class="btn secondary small" onclick="setRecoverDues('${c.id}', false)" title="Remove its unpaid rent from every list">Write off dues</button>`
@@ -2951,6 +3021,17 @@ async function cancelContract(id){
   const { error } = await sb.from('contracts').update({ status:'cancelled', end_date: manilaToday(), recover_dues: recover }).eq('id', id);
   if(error){ alert('Could not cancel: ' + error.message + '\n\nIf it mentions recover_dues, run ace-feature-update-26.sql first.'); return; }
   loadContractsTable(); loadUnitsTable(); loadDashboard();
+  try{
+    const { data: cu } = await sb.from('contract_units').select('unit_id').eq('contract_id', id);
+    const ids = (cu||[]).map(x=>x.unit_id);
+    if(ids.length){
+      const { data: st } = await sb.from('v_unit_status').select('unit_id, unit_name, occupancy').in('unit_id', ids);
+      const by = new Map(); (st||[]).forEach(u=>{ const p=by.get(u.unit_id); if(!p || u.occupancy==='occupied') by.set(u.unit_id,u); });
+      const vac = [...by.values()].filter(u=>u.occupancy==='vacant').map(u=>u.unit_name.trim());
+      const still = [...by.values()].filter(u=>u.occupancy==='occupied').map(u=>u.unit_name.trim());
+      alert('Contract cancelled.' + (vac.length ? '\n\nNow vacant: ' + vac.join(', ') : '') + (still.length ? '\n\nStill occupied (another active contract covers it): ' + still.join(', ') : ''));
+    }
+  }catch(e){}
 }
 
 async function setRecoverDues(id, recover){
@@ -3447,7 +3528,10 @@ function portalLinkFor(r){
   return location.href.split('#')[0].split('?')[0].replace(/[^\/]*$/, '') + 'pay-proof.html?t=' + (r.portal_token||'');
 }
 function renterPortalHtml(r){
-  if(!r.portal_token) return '<p class="muted" style="margin:6px 0;">Run ace-feature-update-29.sql to give this renter an ID and payment link.</p>';
+  if(!r.portal_token && !r.renter_code) return '<p class="muted" style="margin:6px 0;">Run ace-feature-update-29.sql to give this renter an ID and payment link.</p>';
+  if(!r.portal_token) return `<div style="margin:8px 0;padding:10px;border:1px dashed var(--line);border-radius:10px;"><strong>Renter ID: ${bulkEsc(r.renter_code)}</strong>
+    <span class="muted"> · payment link is OFF (the old link no longer works)</span><br>
+    <button class="btn secondary small" onclick="setPortalLink('${r.id}', true, false)">Turn link on (new link)</button></div>`;
   const link = portalLinkFor(r);
   const msg = `Hi ${r.name}, here is your personal link to pay and send your proof of payment (Renter ID ${r.renter_code}): ${link}`;
   const viber = viberNumber(r.contact_number);
@@ -3458,13 +3542,26 @@ function renterPortalHtml(r){
     ${r.contact_number ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="${smsHref(r.contact_number, msg)}">SMS</a>` : ''}
     ${viber ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="viber://chat?number=${viber}&text=${encodeURIComponent(msg)}">Viber</a>` : ''}
     ${r.email ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="mailto:${encodeURIComponent(r.email)}?subject=${encodeURIComponent('Your payment link')}&body=${encodeURIComponent(msg)}">Email</a>` : ''}
+    <br><button class="btn secondary small" style="margin-top:6px;" onclick="setPortalLink('${r.id}', true, true)" title="Use if the link leaked or was shared by mistake. The old link stops working at once.">New link (old one stops)</button>
+    <button class="btn danger small" style="margin-top:6px;" onclick="setPortalLink('${r.id}', false, true)" title="Use when the renter moves out. Turns the link off.">Turn link off</button>
   </div>`;
+}
+async function setPortalLink(renterId, on, hadLink){
+  const msg = !on ? 'Turn this renter\'s payment link OFF? The current link stops working immediately. Proofs already sent stay on record.'
+    : hadLink ? 'Create a NEW payment link? The old link stops working immediately, so send the new one to the renter.'
+    : 'Turn the payment link on with a brand-new link?';
+  if(!confirm(msg)) return;
+  let tok = null;
+  if(on){ const a = new Uint8Array(16); crypto.getRandomValues(a); tok = [...a].map(b=>b.toString(16).padStart(2,'0')).join(''); }
+  const { error } = await sb.from('renters').update({ portal_token: tok }).eq('id', renterId);
+  if(error){ alert('Could not change the link: ' + error.message); return; }
+  showRenterDetail(renterId);
 }
 function copyText(t, btn){
   try{ navigator.clipboard.writeText(t); }catch(e){ prompt('Copy this link:', t); }
   if(btn){ const o = btn.textContent; btn.textContent = 'Copied ✓'; setTimeout(()=>btn.textContent = o, 1500); }
 }
-function toggleProofSettings(){ document.getElementById('proofSettings').classList.toggle('hidden'); }
+document.addEventListener('toggle', e=>{ if(e.target && e.target.id==='reportsBox' && e.target.open && window.Chart){ setTimeout(()=>Object.values(Chart.instances||{}).forEach(c=>{ try{ c.resize(); }catch(_){} }), 50); } }, true);
 async function saveProofSettings(){
   const rows = [
     { key:'owner_email', value: document.getElementById('ownerEmail').value.trim(), updated_at: new Date().toISOString() },
@@ -3493,25 +3590,28 @@ async function loadProofs(){
     .select('id, amount, paid_at, ref_number, flags, new_sender, created_at, renters(name, renter_code)')
     .eq('status','pending').order('created_at');
   if(error){ card.classList.add('hidden'); return; }           // update 29 not run yet
-  // always show the card so the Alerts settings stay reachable
-  card.classList.remove('hidden');
   const { data: st } = await sb.from('app_settings').select('key,value').in('key',['owner_email','owner_phone']);
   (st||[]).forEach(x=>{ const el = document.getElementById(x.key==='owner_email'?'ownerEmail':'ownerPhone'); if(el && document.activeElement !== el) el.value = x.value||''; });
   const rows = data || [];
+  window.__proofCount = rows.length;
+  const tn = document.getElementById('tileProofsNum'); if(tn) tn.textContent = rows.length;
+  card.classList.toggle('hidden', rows.length === 0);
   document.getElementById('proofsCount').innerHTML = rows.length ? `<span class="badge b-overdue">${rows.length}</span>` : '';
-  document.getElementById('proofsTable').innerHTML = rows.length ? rows.map(r=>`
-    <tr class="clickRow" onclick="openProofReview('${r.id}')">
-      <td><strong>${bulkEsc(r.renters?.name||'—')}</strong><br><span class="muted">${bulkEsc(r.renters?.renter_code||'')}</span></td>
-      <td><strong>${fmtMoney(r.amount)}</strong></td>
-      <td>${bulkEsc(r.ref_number)}</td>
-      <td>${r.paid_at ? fmtDate(new Date(r.paid_at).toLocaleDateString('sv-SE',{timeZone:'Asia/Manila'})) : '—'}</td>
-      <td>${proofFlagBadges({ ...(r.flags||{}), ...(r.new_sender ? {} : {}) })}${r.new_sender ? ' <span class="badge b-overdue" title="Renter says they paid from a different account">different account</span>' : ''}</td>
-      <td><button class="btn small" onclick="event.stopPropagation();openProofReview('${r.id}')">Review</button></td>
-    </tr>`).join('') : '<tr><td colspan="6" class="muted">No proofs waiting. 🎉</td></tr>';
+  document.getElementById('proofsTable').innerHTML = rows.map(r=>{
+    const sent = new Date(r.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila', month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+    return `<div class="hcard">
+      <div class="top"><div class="nm">${bulkEsc(r.renters?.name||'—')} <span class="muted">${bulkEsc(r.renters?.renter_code||'')}</span></div><div class="amt">${fmtMoney(r.amount)}</div></div>
+      <div class="sub">Ref ${bulkEsc(r.ref_number||'—')} · sent ${sent}</div>
+      <div>${proofFlagBadges({ ...(r.flags||{}) })}${r.new_sender ? ' <span class="badge b-overdue" title="Renter says they paid from a different account">different account</span>' : ''}</div>
+      <div class="acts">
+        <button class="btn secondary big" onclick="openProofReview('${r.id}', true)">Reject</button>
+        <button class="btn big" onclick="openProofReview('${r.id}')">Approve</button>
+      </div></div>`;
+  }).join('');
 }
 
 let pv = null;
-async function openProofReview(id){
+async function openProofReview(id, focusReject){
   let ov = document.getElementById('proofOverlay');
   if(!ov){
     ov = document.createElement('div'); ov.id = 'proofOverlay';
@@ -3531,6 +3631,7 @@ async function openProofReview(id){
   rows.forEach(r=>{ if(acc < amt - 0.004){ r.checked = true; acc += r.balance; } });
   pv = { proof, rows, amount: amt, left: amt };
   pvAllocate(); pvRender();
+  if(focusReject){ pvShowReject(); const t = document.getElementById('pvReasonTxt'); if(t){ t.scrollIntoView({block:'center'}); t.focus(); } }
 }
 function closeProofReview(){ const o = document.getElementById('proofOverlay'); if(o) o.style.display = 'none'; pv = null; }
 function pvAllocate(){
