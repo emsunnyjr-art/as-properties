@@ -80,6 +80,15 @@
   details#reportsBox{max-width:100%;overflow:hidden;} details#reportsBox canvas{max-width:100%;}
   details#reportsBox>summary{list-style:none;} details#reportsBox>summary::before{content:"▸ ";} details#reportsBox[open]>summary::before{content:"▾ ";}
   @media (min-width:900px){ .homeTop{grid-template-columns:2fr 1fr;} .homeTiles{grid-template-columns:1fr 1fr;} }
+
+  #bottomNav{display:none;}
+  .moreList{display:grid;gap:10px;} .moreList button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-height:56px;padding:12px 16px;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;text-align:left;} .moreList small{font-size:13px;color:var(--muted);font-weight:400;}
+  @media (max-width:899px){
+    #tabNav{display:none;} .deskOnly{display:none;}
+    #bottomNav{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--border);z-index:60;padding-bottom:env(safe-area-inset-bottom);}
+    #bottomNav button{background:none;border:none;color:var(--muted);min-height:56px;font-size:15px;cursor:pointer;} #bottomNav button.active{color:var(--accent);font-weight:700;}
+    main{padding-bottom:84px;} #toTopBtn{bottom:72px;}
+  }
 #toTopBtn{position:fixed;right:16px;bottom:16px;width:44px;height:44px;border-radius:50%;border:0;background:var(--accent);color:#04121e;font-size:20px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);display:none;z-index:50;}
 #toTopBtn.show{display:block;}
 </style>
@@ -111,8 +120,8 @@
     <small id="todayLabel"></small>
   </div>
   <div>
-    <button class="btn secondary small" onclick="showChangePassword()">🔑 Change Password</button>
-    <button class="btn secondary small" onclick="logoutApp()">🔒 Log out</button>
+    <button class="btn secondary small deskOnly" onclick="showChangePassword()">Change Password</button>
+    <button class="btn secondary small deskOnly" onclick="logoutApp()">Log out</button>
     <button class="btn secondary small" onclick="loadAll()">Refresh</button>
   </div>
 </header>
@@ -120,11 +129,13 @@
 <div id="changePasswordPanel"></div>
 
 <nav id="tabNav">
-  <button data-tab="dashboard" class="active">Dashboard</button>
+  <button data-tab="dashboard" class="active">Home</button>
   <button data-tab="properties">Properties</button>
   <button data-tab="renters">Renters</button>
   <button data-tab="contracts">Contracts</button>
   <button data-tab="payments">Payments</button>
+  <button data-tab="reports">Reports</button>
+  <button data-tab="alerts">Alerts</button>
 </nav>
 
 <main>
@@ -154,18 +165,13 @@
 
     <div class="card" id="alsoWeek"></div>
 
-    <details class="card" id="reportsBox">
-      <summary class="section-title" style="cursor:pointer;margin:0;">Reports and settings</summary>
-      <div style="margin-top:12px;">
-        <div class="card" style="background:var(--panel2);">
-          <p class="section-title">Alerts</p>
-          <p class="muted">Get a message on your own phone or email each time a renter sends proof of payment.</p>
-          <div class="row">
-            <div><label>My email</label><input id="ownerEmail" type="email" placeholder="you@example.com"></div>
-            <div><label>My mobile (SMS)</label><input id="ownerPhone" placeholder="09XX XXX XXXX"></div>
-          </div>
-          <button class="btn big" onclick="saveProofSettings()">Save alerts</button>
-        </div>
+
+  </section>
+
+  <!-- ============ REPORTS ============ -->
+  <section id="tab-reports" class="hidden">
+    <p class="section-title" style="font-size:18px;">Reports</p>
+    <div id="reportsBox">
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
         <p class="section-title" style="margin:0;">Unpaid balances — active contracts</p>
@@ -220,8 +226,35 @@
       <p class="muted" id="reminderEmpty">Nothing pending right now.</p>
       <div id="reminderList"></div>
     </div>
+      </div>
+  </section>
+
+  <!-- ============ ALERTS ============ -->
+  <section id="tab-alerts" class="hidden">
+    <p class="section-title" style="font-size:18px;">Alerts</p>
+        <div class="card">
+          
+          <p class="muted">Get a message on your own phone or email each time a renter sends proof of payment.</p>
+          <div class="row">
+            <div><label>My email</label><input id="ownerEmail" type="email" placeholder="you@example.com"></div>
+            <div><label>My mobile (SMS)</label><input id="ownerPhone" placeholder="09XX XXX XXXX"></div>
+          </div>
+          <button class="btn big" onclick="saveProofSettings()">Save alerts</button>
         </div>
-    </details>
+
+  </section>
+
+  <!-- ============ MORE (phone) ============ -->
+  <section id="tab-more" class="hidden">
+    <p class="section-title" style="font-size:18px;">More</p>
+    <div class="moreList">
+      <button onclick="switchToTab('properties')"><span>Properties</span><small>Buildings, units, floor plans</small></button>
+      <button onclick="switchToTab('contracts')"><span>Contracts</span><small>New contract, renew, cancel</small></button>
+      <button onclick="switchToTab('reports')"><span>Reports</span><small>Charts, unpaid table, coming up</small></button>
+      <button onclick="switchToTab('alerts')"><span>Alerts</span><small>Your email and mobile for payment proofs</small></button>
+      <button onclick="showChangePassword();switchToTab('dashboard')"><span>Change password</span></button>
+      <button onclick="logoutApp()"><span>Log out</span></button>
+    </div>
   </section>
 
   <!-- ============ PROPERTIES ============ -->
@@ -538,6 +571,13 @@
 
 </main>
 
+<nav id="bottomNav">
+  <button data-go="dashboard" class="active">Home</button>
+  <button data-go="renters">Renters</button>
+  <button data-go="payments">Payments</button>
+  <button data-go="more">More</button>
+</nav>
+
 <button id="toTopBtn" title="Back to top" aria-label="Back to top" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
 <script>
 window.addEventListener('scroll',function(){var b=document.getElementById('toTopBtn');if(b)b.classList.toggle('show',window.scrollY>400);},{passive:true});
@@ -565,14 +605,8 @@ document.getElementById("todayLabel").textContent = new Date().toLocaleDateStrin
   { weekday:'long', year:'numeric', month:'long', day:'numeric' });
 
 // ---------- tab nav ----------
-document.querySelectorAll('#tabNav button').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('#tabNav button').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
-    document.querySelectorAll('main > section').forEach(s=>s.classList.add('hidden'));
-    document.getElementById('tab-'+btn.dataset.tab).classList.remove('hidden');
-  });
-});
+document.querySelectorAll('#tabNav button').forEach(btn=>btn.addEventListener('click', ()=>switchToTab(btn.dataset.tab)));
+document.querySelectorAll('#bottomNav button').forEach(btn=>btn.addEventListener('click', ()=>switchToTab(btn.dataset.go)));
 
 function fmtMoney(n){ return '₱' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2}); }
 function fmtDate(d){ return d ? new Date(d+'T00:00:00').toLocaleDateString() : '—'; }
@@ -1090,8 +1124,11 @@ function balanceCellHtml(b, isActive){
 
 function switchToTab(name){
   document.querySelectorAll('#tabNav button').forEach(b=>b.classList.toggle('active', b.dataset.tab === name));
+  const bottomKey = ['dashboard','renters','payments'].includes(name) ? name : 'more';
+  document.querySelectorAll('#bottomNav button').forEach(b=>b.classList.toggle('active', b.dataset.go === bottomKey));
   document.querySelectorAll('main > section').forEach(s=>s.classList.add('hidden'));
   document.getElementById('tab-'+name).classList.remove('hidden');
+  if(name === 'reports' && window.Chart) setTimeout(()=>Object.values(Chart.instances||{}).forEach(c=>{ try{ c.resize(); }catch(_){} }), 50);
   window.scrollTo({ top:0, behavior:'smooth' });
 }
 
@@ -2858,10 +2895,7 @@ function onUnitFilterChange(){
 }
 
 function filterContractsByUnit(unitId, unitName){
-  document.querySelectorAll('#tabNav button').forEach(b=>b.classList.remove('active'));
-  document.querySelector('#tabNav button[data-tab="contracts"]').classList.add('active');
-  document.querySelectorAll('main > section').forEach(s=>s.classList.add('hidden'));
-  document.getElementById('tab-contracts').classList.remove('hidden');
+  switchToTab('contracts');
   document.getElementById('contractsFilterLocation').value = '';
   populateContractsFilterBuilding();
   document.getElementById('contractUnitFilter').value = unitId;
@@ -3561,7 +3595,6 @@ function copyText(t, btn){
   try{ navigator.clipboard.writeText(t); }catch(e){ prompt('Copy this link:', t); }
   if(btn){ const o = btn.textContent; btn.textContent = 'Copied ✓'; setTimeout(()=>btn.textContent = o, 1500); }
 }
-document.addEventListener('toggle', e=>{ if(e.target && e.target.id==='reportsBox' && e.target.open && window.Chart){ setTimeout(()=>Object.values(Chart.instances||{}).forEach(c=>{ try{ c.resize(); }catch(_){} }), 50); } }, true);
 async function saveProofSettings(){
   const rows = [
     { key:'owner_email', value: document.getElementById('ownerEmail').value.trim(), updated_at: new Date().toISOString() },
