@@ -566,8 +566,10 @@
     </div>
 
     <div class="card">
-      <p class="section-title">Select contract</p>
+      <p class="section-title">Contract you are working on</p>
+      <p class="muted" style="margin-top:-6px;">The schedule, itemized bill and every payment below apply to this contract only. A renter with two contracts has two entries.</p>
       <select id="payContractSelect" onchange="loadPaymentSchedule(); loadItemizedBill();"></select>
+      <div id="payForBanner"></div>
     </div>
 
     <div id="itemizedNotifyPanel"></div>
@@ -1150,7 +1152,7 @@ function switchToTab(name){
 function openPaymentsForContract(contractId){
   switchToTab('payments');
   const sel = document.getElementById('payContractSelect');
-  if(sel){ sel.value = contractId; loadPaymentSchedule(); loadItemizedBill(); }
+  if(sel){ sel.value = contractId; if(sel.value !== contractId){ loadPayContractSelect().then(()=>{ sel.value = contractId; loadPaymentSchedule(); loadItemizedBill(); }); } else { loadPaymentSchedule(); loadItemizedBill(); } }
 }
 
 let balanceContextMap = {};
@@ -3269,10 +3271,39 @@ async function printContract(id){
 }
 
 // ---------- PAYMENTS ----------
+let payContractInfo = {};
 async function loadPayContractSelect(){
-  const { data } = await sb.from('contracts').select('id, start_date, units!unit_id(unit_name), renters(name)').eq('status','active').order('start_date', { ascending:false });
-  document.getElementById('payContractSelect').innerHTML = (data||[]).map(c=>`<option value="${c.id}">${c.units?.unit_name} — ${c.renters?.name}</option>`).join('');
-  if(data && data.length){ loadPaymentSchedule(); loadItemizedBill(); }
+  const sel = document.getElementById('payContractSelect');
+  const keep = sel.value;                       // never jump to another contract when the list refreshes
+  const [{ data }, { data: bals }] = await Promise.all([
+    sb.from('contracts').select('id, status, recover_dues, rent_amount, rent_period, start_date, renters(name), contract_units(units(unit_name, buildings(name)))')
+      .or('status.eq.active,and(status.eq.cancelled,recover_dues.eq.true)'),
+    sb.from('v_contract_balance').select('contract_id, balance, periods_unpaid')
+  ]);
+  const bal = Object.fromEntries((bals||[]).map(x=>[x.contract_id, Number(x.balance)||0]));
+  payContractInfo = {};
+  const list = (data||[]).map(c=>{
+    const units = (c.contract_units||[]).map(x=>x.units?.unit_name).filter(Boolean).map(n=>n.trim());
+    const blds = [...new Set((c.contract_units||[]).map(x=>x.units?.buildings?.name).filter(Boolean))];
+    const owes = bal[c.id] || 0;
+    const info = { renter: c.renters?.name||'—', units: units.join(', ')||'—', bld: blds.join(', '), rent: c.rent_amount, period: c.rent_period, start: c.start_date, status: c.status, owes };
+    payContractInfo[c.id] = info;
+    return { id:c.id, info };
+  }).sort((x,y)=> x.info.renter.localeCompare(y.info.renter) || String(y.info.start).localeCompare(String(x.info.start)));
+  sel.innerHTML = list.map(({id, info})=>`<option value="${id}">${bulkEsc(info.renter)} — ${bulkEsc(info.units)} · ${fmtMoney(info.rent)} ${({monthly:'a month',weekly:'a week',daily:'a day',yearly:'a year'})[info.period]||info.period} · ${info.owes>0 ? 'owes '+fmtMoney(info.owes) : 'paid up'}${info.status==='cancelled' ? ' · cancelled' : ''}</option>`).join('');
+  if(keep && payContractInfo[keep]) sel.value = keep;
+  if(list.length){ loadPaymentSchedule(); loadItemizedBill(); }
+}
+function payForBanner(contractId){
+  const i = payContractInfo[contractId], el = document.getElementById('payForBanner');
+  if(!el) return;
+  if(!i){ el.innerHTML = ''; return; }
+  el.innerHTML = `<div style="margin-top:10px;padding:12px;border:2px solid var(--accent);border-radius:10px;">
+    <div class="muted" style="font-size:13px;">Recording payments for</div>
+    <div style="font-size:18px;font-weight:800;">${bulkEsc(i.renter)}</div>
+    <div>${bulkEsc(i.units)}${i.bld ? ' <span class="muted">('+bulkEsc(i.bld)+')</span>' : ''}</div>
+    <div class="muted">${fmtMoney(i.rent)} ${({monthly:'a month',weekly:'a week',daily:'a day',yearly:'a year'})[i.period]||i.period} · started ${fmtDate(i.start)}${i.status==='cancelled' ? ' · cancelled' : ''}</div>
+    <div style="margin-top:4px;font-weight:700;color:${i.owes>0?'var(--bad)':'var(--good)'};">${i.owes>0 ? 'Owes '+fmtMoney(i.owes) : 'Paid up'}</div></div>`;
 }
 
 // ---------- PAYMENT METHODS (GCash/Maya/Bank QR kiosk) ----------
@@ -3476,7 +3507,8 @@ async function collectItemizedBill(contractId){
   if(checked.length === 0) return alert('Select at least one item to collect.');
   if(!received) return alert('Enter the date the money was received.');
   const total = checked.reduce((n,it)=>n+it.amount, 0);
-  if(!confirm(`Record ${peso(total)} received on ${fmtDate(received)} for ${checked.length} item(s)?`)) return;
+  const ci = payContractInfo[document.getElementById('payContractSelect').value] || {};
+  if(!confirm(`Record ${peso(total)} received on ${fmtDate(received)} for ${checked.length} item(s)?\n\nRenter: ${ci.renter||'—'}\nUnit(s): ${ci.units||'—'}`)) return;
 
   let receiptPath = null, receiptName = null;
   const file = document.getElementById('itemizedReceipt').files[0];
@@ -4085,6 +4117,7 @@ async function bulkSave(){
 async function loadPaymentSchedule(){
   const contractId = document.getElementById('payContractSelect').value;
   if(!contractId){ document.getElementById('scheduleTable').innerHTML=''; return; }
+  payForBanner(contractId);
   const { data, error } = await sb.from('rent_payments').select('*').eq('contract_id', contractId).order('due_date');
   if(error){ document.getElementById('scheduleTable').innerHTML = `<tr><td colspan="8" class="muted">Could not load the schedule (${error.message}). Please refresh and try again.</td></tr>`; return; }
   document.getElementById('scheduleTable').innerHTML = (data||[]).map(p=>{
