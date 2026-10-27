@@ -1158,6 +1158,13 @@ function openPaymentsForContract(contractId){
   if(sel){ sel.value = contractId; if(sel.value !== contractId){ loadPayContractSelect().then(()=>{ sel.value = contractId; loadPaymentSchedule(); loadItemizedBill(); }); } else { loadPaymentSchedule(); loadItemizedBill(); } }
 }
 
+function setProofTile(n){
+  const num = document.getElementById('tileProofsNum'), lbl = document.getElementById('tileProofsLbl');
+  if(!num) return;
+  num.textContent = n;
+  num.style.color = n > 0 ? 'var(--warn)' : 'var(--muted)';
+  if(lbl) lbl.style.color = n > 0 ? '' : 'var(--muted)';
+}
 let balanceContextMap = {};
 async function loadBalanceSummary(){
   const body = document.getElementById('balanceTable');
@@ -1250,7 +1257,8 @@ async function loadDashboard(){
     const owed = dashStat.balances.reduce((t,r)=>t+Number(r.balance),0);
     document.getElementById('homeTiles').innerHTML = `
       <div class="homeTile" onclick="showStatList('unpaid')"><div class="n" style="color:var(--bad);">${behindCount}</div><div class="l">Overdue</div><div class="s">${fmtMoney(owed)} owed</div></div>
-      <div class="homeTile" onclick="document.getElementById('proofsCard').scrollIntoView({behavior:'smooth'})"><div class="n" style="color:var(--warn);" id="tileProofsNum">${window.__proofCount||0}</div><div class="l">Waiting for you</div><div class="s">payment proofs</div></div>`;
+      <div class="homeTile" id="tileProofs" onclick="document.getElementById('proofsCard').scrollIntoView({behavior:'smooth'})"><div class="n" id="tileProofsNum">${window.__proofCount||0}</div><div class="l" id="tileProofsLbl">Waiting for you</div><div class="s">payment proofs</div></div>`;
+    setProofTile(window.__proofCount||0);
 
     // Overdue: top 3 by amount, one card each
     const oc = document.getElementById('overdueCard');
@@ -3719,7 +3727,7 @@ async function loadProofs(){
   (st||[]).forEach(x=>{ const el = document.getElementById(x.key==='owner_email'?'ownerEmail':'ownerPhone'); if(el && document.activeElement !== el) el.value = x.value||''; });
   const rows = data || [];
   window.__proofCount = rows.length;
-  const tn = document.getElementById('tileProofsNum'); if(tn) tn.textContent = rows.length;
+  setProofTile(rows.length);
   card.classList.toggle('hidden', rows.length === 0);
   document.getElementById('proofsCount').innerHTML = rows.length ? `<span class="badge b-overdue">${rows.length}</span>` : '';
   document.getElementById('proofsTable').innerHTML = rows.map(r=>{
