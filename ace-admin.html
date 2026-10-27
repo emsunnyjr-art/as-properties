@@ -3424,9 +3424,8 @@ async function showPaymentKiosk(context){
       <div style="display:flex;flex-wrap:wrap;gap:24px;justify-content:center;margin-top:20px;">
         ${withUrls.map(pm => `
           <div style="border:1px solid #ddd;border-radius:12px;padding:20px;width:240px;">
-            <h3 style="margin:0 0 8px 0;">${pm.label}</h3>
+            <h3 style="margin:0 0 8px 0;">${({gcash:'GCash',maya:'Maya',bank:'Bank',other:'Other'})[pm.method_type] || 'Scan to pay'}</h3>
             ${pm.qrUrl ? `<img src="${pm.qrUrl}" style="width:100%;border-radius:8px;">` : '<p style="color:#999;">No QR image uploaded</p>'}
-            <p style="margin-top:10px;font-size:14px;">${pm.account_number||''}${pm.account_name ? '<br>'+pm.account_name : ''}</p>
           </div>
         `).join('')}
       </div>
