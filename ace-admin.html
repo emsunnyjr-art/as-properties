@@ -114,18 +114,21 @@
   ⚠ Set SUPABASE_URL and SUPABASE_ANON_KEY at the top of this file's &lt;script&gt; block, then re-upload.
 </div>
 
-<div id="lockScreen" style="position:fixed;inset:0;background:var(--bg);z-index:2000;display:flex;align-items:center;justify-content:center;">
-  <div class="card" style="width:300px;">
-    <p class="section-title" style="text-align:center;">🔒 Ace Properties</p>
-    <input id="loginEmail" type="email" placeholder="Email" autocomplete="username">
-    <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter') submitLogin()">
-    <button class="btn" style="width:100%;" onclick="submitLogin()">Log In</button>
-    <p class="muted" id="loginError" style="text-align:center;color:var(--bad);"></p>
-    <p class="muted" id="loginForgotMsg" style="text-align:center;"></p>
-    <p class="muted" style="text-align:center;margin-top:10px;">
-      <a href="#" onclick="submitForgotPassword();return false;">Forgot password?</a>
+<div id="lockScreen" style="position:fixed;inset:0;background:var(--bg);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto;">
+  <div class="card" style="width:100%;max-width:360px;margin:0;">
+    <p class="section-title" style="text-align:center;font-size:20px;">🔒 Ace Properties</p>
+    <label for="loginEmail" style="font-size:14px;">Email</label>
+    <input id="loginEmail" type="email" autocomplete="username" style="min-height:48px;font-size:16px;">
+    <label for="loginPassword" style="font-size:14px;">Password</label>
+    <input id="loginPassword" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter') submitLogin()" style="min-height:48px;font-size:16px;margin-bottom:6px;">
+    <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:0 0 12px 0;min-height:32px;cursor:pointer;"><input type="checkbox" onchange="document.getElementById('loginPassword').type = this.checked ? 'text' : 'password'"> Show password</label>
+    <button class="btn" style="width:100%;min-height:48px;font-size:16px;" onclick="submitLogin()">Log In</button>
+    <p id="loginError" role="alert" style="text-align:center;color:var(--bad);font-size:14px;margin:10px 0 0 0;"></p>
+    <p class="muted" id="loginForgotMsg" style="text-align:center;margin:6px 0 0 0;"></p>
+    <p style="text-align:center;margin:6px 0 0 0;">
+      <a href="#" class="seeAll" style="display:inline-block;padding:16px 12px;font-size:15px;" onclick="submitForgotPassword();return false;">Forgot password?</a>
     </p>
-    <p class="muted" style="text-align:center;margin-top:10px;">No account? Ask the property owner to create one for you in Supabase.</p>
+    <p class="muted" style="text-align:center;margin:0;font-size:13px;">Need an account? Ask the property owner to set one up for you.</p>
   </div>
 </div>
 
@@ -4276,7 +4279,7 @@ async function submitLogin(){
   if(!email || !password) return;
   const { error } = await sb.auth.signInWithPassword({ email, password });
   if(error){
-    document.getElementById('loginError').textContent = error.message;
+    document.getElementById('loginError').textContent = /invalid|credentials|password/i.test(error.message||'') ? 'Email or password is not right.' : 'Could not log in. ' + (error.message||'Please try again.');
     return;
   }
   document.getElementById('lockScreen').style.display = 'none';
@@ -4288,7 +4291,7 @@ async function submitForgotPassword(){
   const email = document.getElementById('loginEmail').value.trim();
   const msgEl = document.getElementById('loginForgotMsg');
   if(!email){
-    document.getElementById('loginError').textContent = 'Type your email above first, then click "Forgot password?".';
+    document.getElementById('loginError').textContent = 'Type your email above first, then tap Forgot password.';
     return;
   }
   document.getElementById('loginError').textContent = '';
@@ -4303,7 +4306,7 @@ async function submitForgotPassword(){
     return;
   }
   msgEl.style.color = 'var(--good)';
-  msgEl.textContent = '✅ Reset link sent — check your email.';
+  msgEl.textContent = 'Reset link sent. Check your email.';
 }
 
 // ---------- init ----------
