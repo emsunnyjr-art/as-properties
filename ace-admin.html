@@ -190,6 +190,7 @@
   <section id="tab-reports" class="hidden">
     <p class="section-title" style="font-size:18px;">Reports</p>
     <div id="reportsBox">
+    <div class="card clickStat" id="rentRollCard" style="display:none;" onclick="switchToTab('dashboard');showStatList('occupied')"></div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
         <p class="section-title" style="margin:0;">Unpaid balances — active contracts</p>
@@ -1248,12 +1249,13 @@ async function loadDashboard(){
     const pctBar = dueMonth > 0 ? Math.min(100, Math.max(0, got/dueMonth*100)) : 0;
     const monthName = new Date(mStart+'T00:00:00').toLocaleDateString('en-PH',{month:'long', year:'numeric'});
     document.getElementById('homeMoney').innerHTML = `
-      <div class="muted" style="font-size:14px;">Collected this month · ${monthName}</div>
+      <div class="muted" style="font-size:14px;">Collected this month</div>
       <div class="big">${fmtMoney(got)}</div>
       <div class="bar"><div style="width:${pctBar}%"></div></div>
-      <div style="display:flex;justify-content:space-between;font-size:14px;margin-top:6px;color:var(--muted);"><span>of ${fmtMoney(dueMonth)} rent due this month</span><span>${Math.round(pctBar)}%</span></div>
-      <div style="margin-top:10px;font-size:14px;color:var(--muted);cursor:pointer;" onclick="showStatList('occupied')">Rent roll ${fmtMoney(earning)} a month from ${occupied} rented unit${occupied===1?'':'s'} · tap for list</div>`;
+      <div style="display:flex;justify-content:space-between;font-size:14px;margin-top:6px;color:var(--muted);"><span>of ${fmtMoney(dueMonth)} rent due this month</span><span>${Math.round(pctBar)}%</span></div>`;
 
+    const rr = document.getElementById('rentRollCard');
+    if(rr){ rr.style.display = ''; rr.innerHTML = `<div class="muted" style="font-size:14px;">Rent roll</div><div style="font-size:26px;font-weight:800;">${fmtMoney(earning)} <span class="muted" style="font-size:15px;font-weight:400;">a month</span></div><div class="muted" style="font-size:14px;">from ${occupied} rented unit${occupied===1?'':'s'} · tap for list</div>`; }
     const owed = dashStat.balances.reduce((t,r)=>t+Number(r.balance),0);
     document.getElementById('homeTiles').innerHTML = `
       <div class="homeTile" onclick="showStatList('unpaid')"><div class="n" style="color:var(--bad);">${behindCount}</div><div class="l">Overdue</div><div class="s">${fmtMoney(owed)} owed</div></div>
