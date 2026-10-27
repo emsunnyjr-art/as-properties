@@ -451,7 +451,7 @@
         <div><label>Deposit covers (<span class="perWord">months</span>)</label><input id="cDepositPeriods" type="number" min="0" step="1" value="0" oninput="onAdvPeriodsInput('dep'); updateAdvDepHint()"></div>
         <div><label>Start date</label><input id="cStart" type="date" onchange="onEscalationChange(); updateAdvDepHint()"></div>
         <div><label id="cTermLabel">Term (months)</label><input id="cTerm" type="number" value="12" oninput="onEscalationChange()"></div>
-        <div id="cDueDayField"><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="28"></div>
+        <div id="cDueDayField"><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="31"><p class="muted" style="margin:0;">1 to 31. In shorter months it falls on the last day.</p></div>
       </div>
       <p class="muted" id="advDepHint" style="margin:2px 0 8px 0;"></p>
 
@@ -2775,8 +2775,14 @@ async function viewFloorPlan(buildingId){
     </body></html>`;
 }
 
+function contractSaveError(error){
+  const m = (error && error.message) || '';
+  if(/rent_due_day_check/.test(m)) return 'The rent due day must be 1 to 28 until ace-feature-update-31.sql is run in Supabase. Run it to allow 29, 30 and 31, or use a due day of 28 or lower.';
+  return 'Error: ' + m;
+}
 async function saveContract(){
   const rentPeriod = document.getElementById('cRentPeriod').value;
+  { const dd = parseInt(document.getElementById('cDueDay').value); if(rentPeriod === 'monthly' && !(dd >= 1 && dd <= 31)) return alert('Rent due day must be a number from 1 to 31.'); }
   const unitIds = getSelectedUnitIds();
   if(unitIds.length === 0) return alert('Select at least one unit');
 
@@ -2833,7 +2839,7 @@ async function saveContract(){
 
   if(editingContractId){
     const { error } = await sb.from('contracts').update(payload).eq('id', editingContractId);
-    if(error) return alert('Error: ' + error.message);
+    if(error) return alert(contractSaveError(error));
     await sb.rpc('regenerate_schedule_from_today', { p_contract_id: editingContractId });
     // re-price any period with nothing paid yet so the new escalation shows in rent due
     // Only upcoming periods get the new rent. Past dues keep the rate they were billed at,
@@ -2875,7 +2881,7 @@ async function saveContract(){
     }
 
     const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
-    if(error) return alert('Error: ' + error.message);
+    if(error) return alert(contractSaveError(error));
     await applyAdvDep(created.id);
     await uploadSignedFileIfSelected(created.id);
     await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', created.id, 'advance_proof_path', 'advance_proof_name');
