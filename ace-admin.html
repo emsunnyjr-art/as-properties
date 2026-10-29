@@ -3190,6 +3190,19 @@ async function printContract(id){
   const allUnitNames = (cus||[]).map(x=>x.units?.unit_name).filter(Boolean);
 
   const renterName = c.renters?.name || '';
+  // If the renter already signed online, put the signature and name into the document itself
+  let sigImg = '', sigNote = '';
+  if(c.signed_at && c.signature_image_path){
+    try{
+      const { data: blob } = await sb.storage.from('contract-files').download(c.signature_image_path);
+      if(blob){
+        const dataUrl = await new Promise(res=>{ const fr = new FileReader(); fr.onload = ()=>res(fr.result); fr.onerror = ()=>res(''); fr.readAsDataURL(blob); });
+        if(dataUrl) sigImg = `<img src="${dataUrl}" style="max-height:48px;max-width:100%;display:block;">`;
+      }
+    }catch(e){}
+    const when = new Date(c.signed_at).toLocaleString('en-PH',{timeZone:'Asia/Manila', year:'numeric', month:'long', day:'numeric', hour:'numeric', minute:'2-digit'});
+    sigNote = `<div style="font-size:11px;color:#444;margin-top:4px;">Signed electronically by ${bulkEsc(c.signer_name||renterName)} on ${when}</div>`;
+  }
   const renterAddress = c.renters?.address || '________________________';
   const buildingName = c.units?.buildings?.name || '';
   const locationAddress = c.units?.buildings?.locations?.address || '';
@@ -3276,7 +3289,7 @@ async function printContract(id){
 
     <div class="sig">
       <div><div class="line">${LESSOR_NAME}<br>(Lessor)</div></div>
-      <div><div class="line">${renterName}<br>(Lessee)</div></div>
+      <div>${sigImg ? `<div style="height:50px;margin-bottom:-50px;display:flex;align-items:flex-end;justify-content:center;">${sigImg}</div>` : ''}<div class="line">${bulkEsc(renterName)}<br>(Lessee)${sigNote}</div></div>
     </div>
 
     <div class="ack-page">
