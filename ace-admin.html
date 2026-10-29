@@ -99,6 +99,7 @@
   .hcard .acts.one{grid-template-columns:1fr;}
   #renterDetailPanel:not(:empty){position:fixed;inset:0;overflow:auto;background:var(--bg);z-index:70;padding:14px;}
   #renterDetailPanel .rdWrap{max-width:760px;margin:0 auto;}
+  .planBar{height:10px;background:var(--panel2);border-radius:6px;overflow:hidden;margin:10px 0 8px;} .planBar i{display:block;height:100%;background:var(--good);}
   .rdOwed{font-size:40px;font-weight:800;line-height:1.1;margin:4px 0 8px;}
   .schedRow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--border);font-size:16px;} .schedRow:last-child{border-bottom:none;}
   details.rdDetails>summary{cursor:pointer;font-weight:700;font-size:16px;padding:4px 0;}
@@ -1296,7 +1297,7 @@ async function loadDashboard(){
   const empty = document.getElementById('reminderEmpty');
   list.innerHTML = '';
   // Overdue rent already shows (once per renter) in "Unpaid balances", so it is not repeated here.
-  const upcoming = (reminders||[]).filter(r=>!(r.reminder_type === 'rent_overdue' || (r.reminder_type === 'rent_payment' && r.days_offset > 0)));
+  const upcoming = (reminders||[]).filter(r=>r.reminder_type === 'plan_installment' || !(r.reminder_type === 'rent_overdue' || (r.reminder_type === 'rent_payment' && r.days_offset > 0)));
   document.getElementById('reminderCard').classList.toggle('hidden', upcoming.length === 0);
   if(upcoming.length===0){ empty.classList.remove('hidden'); return; }
   empty.classList.add('hidden');
@@ -1305,10 +1306,14 @@ async function loadDashboard(){
   reminderContextMap = {};
 
   upcoming.forEach(r=>{
-    const isRentType = r.reminder_type === 'rent_payment' || r.reminder_type === 'rent_due' || r.reminder_type === 'rent_overdue';
-    const isOverdue = r.reminder_type === 'rent_overdue' || (r.reminder_type === 'rent_payment' && r.days_offset > 0);
+    const isPlan = r.reminder_type === 'plan_installment';
+    const planLeft = isPlan ? Math.max(0, Number(r.amount_due||0) - Number(r.amount_paid||0)) : 0;
+    const isRentType = isPlan || r.reminder_type === 'rent_payment' || r.reminder_type === 'rent_due' || r.reminder_type === 'rent_overdue';
+    const isOverdue = (isPlan && r.days_offset > 0) || r.reminder_type === 'rent_overdue' || (r.reminder_type === 'rent_payment' && r.days_offset > 0);
     let typeLabel;
-    if(r.reminder_type === 'contract_expiring'){
+    if(isPlan){
+      typeLabel = r.days_offset > 0 ? `Installment ${r.days_offset} day(s) late` : r.days_offset === 0 ? 'Installment due today' : `Installment due in ${Math.abs(r.days_offset)} day(s)`;
+    } else if(r.reminder_type === 'contract_expiring'){
       typeLabel = `Contract ${r.days_offset===0?'ends today':'ends in '+r.days_offset+' day(s)'}`;
     } else if(isOverdue){
       typeLabel = `Rent overdue by ${Math.abs(r.days_offset)} day(s)`;
@@ -1318,8 +1323,10 @@ async function loadDashboard(){
     const badgeClass = isOverdue ? 'b-overdue' : r.reminder_type==='contract_expiring' ? 'b-expiring' : 'b-pending';
     const msg = r.reminder_type==='contract_expiring'
       ? `Hi ${r.renter_name}, this is a reminder that your lease for ${r.unit_name} ends on ${fmtDate(r.target_date)}. Please let us know your plans.`
+      : isPlan
+      ? `Hi ${r.renter_name}, this is a reminder that your payment plan installment of ${fmtMoney(planLeft)} for ${r.unit_name} ${r.days_offset > 0 ? 'was due' : 'is due'} ${fmtDate(r.target_date)}. Kindly settle it as agreed.${payText}`
       : `Hi ${r.renter_name}, this is a reminder that rent of ${fmtMoney(r.amount_due)} for ${r.unit_name} was due ${fmtDate(r.target_date)}. Kindly settle at your earliest convenience.${payText}`;
-    reminderContextMap[r.reminder_id] = { amount: r.amount_due, renterName: r.renter_name, unitName: r.unit_name, dueDate: r.target_date };
+    reminderContextMap[r.reminder_id] = { amount: isPlan ? planLeft : r.amount_due, renterName: r.renter_name, unitName: r.unit_name, dueDate: r.target_date };
 
     const div = document.createElement('div');
     div.className = 'reminder-item';
@@ -1327,7 +1334,7 @@ async function loadDashboard(){
       <div>
         <span class="badge ${badgeClass}">${typeLabel}</span><br>
         <strong>${r.renter_name}</strong> — ${r.unit_name}${r.building_name ? ' ('+r.building_name+')' : ''}
-        <div class="muted">${r.reminder_type==='contract_expiring' ? 'Ends' : 'Due'}: ${fmtDate(r.target_date)}${r.amount_due ? ' • '+fmtMoney(r.amount_due) : ''}</div>
+        <div class="muted">${r.reminder_type==='contract_expiring' ? 'Ends' : 'Due'}: ${fmtDate(r.target_date)}${r.amount_due ? ' • '+fmtMoney(isPlan ? planLeft : r.amount_due) : ''}${isPlan ? ' • payment plan' : ''}</div>
       </div>
       <div>
         <a class="action" href="${telHref(r.contact_number)}">📞 Call</a>
@@ -2266,6 +2273,21 @@ async function showRenterDetail(renterId){
   const mainBtn = dueRows.length ? `<button class="btn big" style="width:100%;" onclick="openRenterPay('${dueRows[0].contract_id}')">Record payment</button>`
                 : (myProofs||[]).length ? `<button class="btn big" style="width:100%;" onclick="openProofReview('${myProofs[0].id}')">Review proof</button>` : '';
   const activeIds = [...new Set(activeContracts.map(c=>c.contract_id))];
+  // payment plans (needs update 33; if it is not installed yet the card is simply left out)
+  let planHtml = '';
+  try{
+    const { data: plans, error: planErr } = await sb.from('v_payment_plans').select('*').eq('renter_id', renterId).in('status',['draft','active','completed']).order('created_at',{ascending:false});
+    if(!planErr){
+      const list = plans||[], itemsBy = {};
+      if(list.length){
+        const { data: its } = await sb.from('v_payment_plan_items').select('*').in('plan_id', list.map(x=>x.id)).order('seq');
+        (its||[]).forEach(x=>{ (itemsBy[x.plan_id] ||= []).push(x); });
+        // a plan that is fully paid closes itself
+        for(const pl of list){ if(pl.status==='active' && pl.finished){ pl.status = 'completed'; sb.from('payment_plans').update({ status:'completed' }).eq('id', pl.id).then(()=>{}); } }
+      }
+      planHtml = planCardHtml(r, list, itemsBy, totalOwed);
+    }
+  }catch(e){}
   const panel = document.getElementById('renterDetailPanel');
   panel.innerHTML = `<div class="rdWrap">
     <button class="btn secondary big" onclick="closeRenterDetail()">Back to renters</button>
@@ -2276,6 +2298,7 @@ async function showRenterDetail(renterId){
       <div class="rdOwed" style="color:${totalOwed>0?'var(--bad)':'var(--good)'};">${fmtMoney(totalOwed)}</div>
       ${mainBtn}
     </div>
+    ${planHtml}
     <div class="card">
       <p class="section-title">Schedule</p>
       ${sched.map(({x,t})=>`<div class="schedRow"><div><div>${bulkEsc(lab(x))}</div><div class="muted">${bulkEsc(x.unit_names||'')}${x.due_date ? ' · due '+fmtDate(x.due_date) : ''}</div></div><div style="text-align:right;"><div style="font-weight:700;">${fmtMoney(x.balance)}</div>${t}</div></div>`).join('') || '<p class="muted">Nothing due or coming up.</p>'}
@@ -2329,6 +2352,284 @@ async function showRenterDetail(renterId){
   panel.scrollTop = 0;
 }
 function closeRenterDetail(){ document.getElementById('renterDetailPanel').innerHTML = ''; }
+
+// ---------- PAYMENT PLANS (installments for late dues, signed by the renter) ----------
+const PLAN_FREQ = { weekly:'Every week', every_2_weeks:'Every 2 weeks', twice_monthly:'Twice a month (15th and 30th)', monthly:'Every month' };
+function planDueDates(freq, startISO, n){
+  const out = [];
+  if(freq === 'weekly' || freq === 'every_2_weeks'){
+    for(let i=0;i<n;i++) out.push(addDaysISO(startISO, i*(freq==='weekly'?7:14)));
+  } else if(freq === 'monthly'){
+    for(let i=0;i<n;i++) out.push(addMonthsISO(startISO, i));
+  } else {
+    let [y,m] = startISO.split('-').map(Number);
+    while(out.length < n){
+      const dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      for(const d of [15, Math.min(30, dim)]){
+        const iso = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        if(iso >= startISO && out.length < n) out.push(iso);
+      }
+      m++; if(m>12){ m=1; y++; }
+    }
+  }
+  return out;
+}
+function planBuildItems(total, inst, freq, startISO){
+  total = Math.round(total*100)/100; inst = Math.round(inst*100)/100;
+  if(!(total>0) || !(inst>0) || !startISO) return [];
+  const n = Math.min(Math.ceil(total/inst - 1e-9), 120);
+  const dates = planDueDates(freq, startISO, n);
+  let left = total;
+  return dates.map((d,i)=>{ const a = i===n-1 ? Math.round(left*100)/100 : inst; left = Math.round((left-a)*100)/100; return { due_date:d, amount:a }; });
+}
+function planTermsDefault(total, unitNames){
+  return [
+    `1. Acknowledgment of debt\nThe Lessee acknowledges owing the Lessor ${numberToWords(total)} Pesos (${fmtMoney(total)}) in unpaid rent for ${unitNames||'the leased premises'}, and agrees to pay it in the installments in the schedule above.`,
+    `2. Installments\nEach installment is due on the date shown. Payments are applied to the oldest unpaid installment first.`,
+    `3. Regular rent\nThis plan covers past dues only. Rent that falls due under the lease continues to be payable on time, in addition to these installments.`,
+    `4. Default\nIf an installment is not paid in full within three (3) days after its due date, the Lessor may declare the whole unpaid balance due at once and may use any remedy under the lease and Philippine law.`,
+    `5. No waiver\nAccepting a late or partial payment does not waive any right of the Lessor.`,
+    `6. Lease unchanged\nAll other terms of the lease contract remain in full force.`
+  ].join('\n\n');
+}
+
+function planCardHtml(r, plans, itemsBy, totalOwed){
+  const open = plans.filter(p=>p.status==='draft' || p.status==='active');
+  const done = plans.filter(p=>p.status==='completed')[0];
+  const itemTag = s => s==='paid' ? '<span class="tag good">Paid</span>' : s==='partial' ? '<span class="tag warn">Part paid</span>' : s==='late' ? '<span class="tag bad">Late</span>' : '<span class="tag mute">Upcoming</span>';
+  let html = '';
+  open.forEach(p=>{
+    const its = itemsBy[p.id] || [];
+    const pct = Math.min(100, Math.round(Number(p.paid_total) / Number(p.total_amount) * 100));
+    const unsigned = !p.signed_at;
+    const stateTag = unsigned ? '<span class="tag warn">Not signed yet</span>' : '<span class="tag good">Signed</span>';
+    const lateTag = Number(p.late_count) > 0 ? ` <span class="tag bad">${p.late_count} late · ${fmtMoney(p.late_amount)}</span>` : '';
+    html += `<div class="card">
+      <p class="section-title">Payment plan</p>
+      <div>${stateTag}${lateTag}</div>
+      <div class="planBar"><i style="width:${pct}%"></i></div>
+      <div style="font-size:15px;"><strong>${fmtMoney(p.paid_total)}</strong> paid of ${fmtMoney(p.total_amount)} · <strong>${fmtMoney(p.remaining)}</strong> left</div>
+      <div class="muted">${p.next_due_date ? `Next: ${fmtMoney(p.next_amount)} on ${fmtDate(p.next_due_date)}` : 'All installments paid'} · ${bulkEsc(PLAN_FREQ[p.frequency]||'')}</div>
+      <div style="margin-top:8px;">${its.map(x=>`<div class="schedRow"><div><div>${fmtDate(x.due_date)}</div><div class="muted">Installment ${x.seq}</div></div><div style="text-align:right;"><div style="font-weight:700;">${fmtMoney(x.amount)}</div>${itemTag(x.item_status)}${x.item_status==='partial' ? `<div class="muted">${fmtMoney(x.paid)} paid</div>` : ''}</div></div>`).join('')}</div>
+      <p class="muted" style="margin:8px 0 0;">Payments are recorded the usual way (Record payment). Any rent payment on this contract from ${fmtDate(p.counts_from)} on counts toward the plan, oldest installment first.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
+        ${unsigned ? `<button class="btn big" onclick="sendPlanForSignature('${p.id}')">Send for signature</button>` : ''}
+        <button class="btn secondary big" onclick="printPlan('${p.id}')">${unsigned ? 'Preview' : 'View signed plan'}</button>
+        ${unsigned ? `<button class="btn secondary big" onclick="openPlanForm('${r.id}','${p.id}')">Edit</button>` : ''}
+        ${p.status==='draft' ? `<button class="btn secondary big" onclick="planAgreedOnPaper('${p.id}','${r.id}')">Agreed on paper</button>` : ''}
+        <button class="btn secondary big" onclick="planCancel('${p.id}','${r.id}')">Cancel plan</button>
+      </div>
+      <div id="planNotifyPanel"></div>
+    </div>`;
+  });
+  if(!open.length && totalOwed > 0){
+    html += `<div class="card"><p class="section-title">Payment plan</p>
+      <p class="muted" style="margin:4px 0 10px;">Set up installments for what ${bulkEsc(r.name)} owes. They sign it from a link, and the app tracks every installment.</p>
+      <button class="btn big" style="width:100%;" onclick="openPlanForm('${r.id}')">Set up payment plan</button></div>`;
+  }
+  if(!open.length && done){
+    html += `<div class="card"><p class="section-title">Payment plan</p><span class="tag good">Finished</span>
+      <div class="muted" style="margin:6px 0;">${fmtMoney(done.total_amount)} paid in full under the signed plan.</div>
+      <button class="btn secondary big" onclick="printPlan('${done.id}')">View plan</button></div>`;
+  }
+  return html;
+}
+
+// ----- form -----
+let planDraft = null;
+async function openPlanForm(renterId, planId){
+  const [{ data: r }, { data: bals }, { data: ru }] = await Promise.all([
+    sb.from('renters').select('id, name').eq('id', renterId).single(),
+    sb.from('v_contract_balance').select('contract_id, balance, status, recover_dues').eq('renter_id', renterId),
+    sb.from('v_renter_units').select('contract_id, unit_name').eq('renter_id', renterId)
+  ]);
+  if(!r) return;
+  const unitsOf = {}; (ru||[]).forEach(u=>{ (unitsOf[u.contract_id] ||= []).push((u.unit_name||'').trim()); });
+  const cons = (bals||[]).filter(b=>Number(b.balance)>0 && (b.status==='active' || b.recover_dues))
+    .map(b=>({ id:b.contract_id, balance:Number(b.balance), units:[...new Set(unitsOf[b.contract_id]||[])].join(', ') }))
+    .sort((a,b)=>b.balance-a.balance);
+  const today = manilaToday();
+  if(planId){
+    const { data: pl } = await sb.from('payment_plans').select('*').eq('id', planId).single();
+    const { data: its } = await sb.from('payment_plan_items').select('due_date, amount, seq').eq('plan_id', planId).order('seq');
+    if(!pl) return;
+    if(!cons.some(c=>c.id===pl.contract_id)) cons.push({ id:pl.contract_id, balance:Number(pl.total_amount), units:[...new Set(unitsOf[pl.contract_id]||[])].join(', ') });
+    planDraft = { planId, renterId, renterName:r.name, cons, contractId:pl.contract_id, total:Number(pl.total_amount), inst:Number(pl.installment_amount), freq:pl.frequency,
+      start:pl.start_date, countsFrom:pl.counts_from, terms:pl.terms||'', termsEdited:true, items:(its||[]).map(x=>({ due_date:x.due_date, amount:Number(x.amount) })) };
+  } else {
+    if(!cons.length) return alert('Nothing is owed on this renter’s contracts, so there is nothing to put on a plan.');
+    const c0 = cons[0];
+    const inst = Math.max(100, Math.ceil(c0.balance/4/100)*100);
+    planDraft = { planId:null, renterId, renterName:r.name, cons, contractId:c0.id, total:c0.balance, inst, freq:'twice_monthly', start:addDaysISO(today, 7), countsFrom:today,
+      terms:planTermsDefault(c0.balance, c0.units), termsEdited:false, items:[] };
+    planDraft.items = planBuildItems(planDraft.total, planDraft.inst, planDraft.freq, planDraft.start);
+    if(planDraft.items.length) planDraft.start = planDraft.items[0].due_date;
+  }
+  renderPlanForm();
+}
+function renderPlanForm(){
+  const d = planDraft; let ov = document.getElementById('planFormOverlay');
+  const curCon = d.cons.find(c=>c.id===d.contractId);
+  ov.classList.remove('hidden');
+  ov.innerHTML = `<div style="max-width:620px;margin:0 auto;">
+    <div class="card">
+      <p class="section-title" style="margin-top:0;">${d.planId ? 'Edit payment plan' : 'Payment plan'} — ${bulkEsc(d.renterName)}</p>
+      ${d.cons.length > 1 ? `<label>Contract</label><select onchange="planSet('contractId', this.value)">${d.cons.map(c=>`<option value="${c.id}" ${c.id===d.contractId?'selected':''}>${bulkEsc(c.units||'Contract')} — owes ${fmtMoney(c.balance)}</option>`).join('')}</select>` : `<div class="muted">${bulkEsc(curCon?.units||'')}${curCon ? ' · owes '+fmtMoney(curCon.balance) : ''}</div>`}
+      <label style="margin-top:12px;">Amount the plan covers</label>
+      <input type="number" inputmode="decimal" step="0.01" value="${d.total}" oninput="planSet('total', this.value)">
+      <label style="margin-top:12px;">Each installment</label>
+      <input type="number" inputmode="decimal" step="0.01" value="${d.inst}" oninput="planSet('inst', this.value)">
+      <label style="margin-top:12px;">How often</label>
+      <select onchange="planSet('freq', this.value)">${Object.entries(PLAN_FREQ).map(([k,v])=>`<option value="${k}" ${k===d.freq?'selected':''}>${v}</option>`).join('')}</select>
+      <label style="margin-top:12px;">First installment date</label>
+      <input type="date" id="planStartInput" value="${d.start}" onchange="planSet('start', this.value)">
+      <div id="planSchedBox" style="margin-top:14px;"></div>
+      <label style="margin-top:12px;">Terms the renter signs (you can edit)</label>
+      <textarea id="planTermsBox" rows="9" oninput="planDraft.terms=this.value; planDraft.termsEdited=true;">${bulkEsc(d.terms)}</textarea>
+      <details style="margin-top:10px;"><summary class="muted">Advanced</summary>
+        <label style="margin-top:8px;">Count payments from this date</label>
+        <input type="date" value="${d.countsFrom}" onchange="planDraft.countsFrom=this.value">
+        <div class="muted">Rent payments recorded on this contract on or after this date count toward the plan. Earlier payments do not.</div>
+      </details>
+      <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;">
+        <button class="btn big" onclick="savePlanDraft()">Save plan</button>
+        <button class="btn secondary big" onclick="closePlanForm()">Close</button>
+      </div>
+      <p class="muted">After saving you can send it to the renter for signature.</p>
+    </div></div>`;
+  planRenderSched();
+}
+function planRenderSched(){
+  const d = planDraft, box = document.getElementById('planSchedBox'); if(!box) return;
+  const sum = Math.round(d.items.reduce((s,x)=>s+(Number(x.amount)||0),0)*100)/100;
+  const ok = Math.abs(sum - d.total) < 0.01;
+  box.innerHTML = `<p class="section-title" style="margin:0 0 6px;">Schedule (${d.items.length} installment${d.items.length===1?'':'s'})</p>` +
+    d.items.map((x,i)=>`<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;"><span class="muted" style="width:22px;">${i+1}</span><input type="date" value="${x.due_date}" onchange="planItemSet(${i},'due_date',this.value)"><input type="number" inputmode="decimal" step="0.01" value="${x.amount}" oninput="planItemSet(${i},'amount',this.value)"></div>`).join('') +
+    `<div id="planSumLine" style="font-size:14px;color:${ok?'var(--good)':'var(--bad)'};">Installments add up to ${fmtMoney(sum)} ${ok ? '— matches the plan' : `— should be ${fmtMoney(d.total)}`}</div>
+     <div class="muted">Changing the amount, installment, frequency or first date above rebuilds this list.</div>`;
+}
+function planSet(k, v){
+  const d = planDraft;
+  if(k==='contractId'){ d.contractId = v; const c = d.cons.find(x=>x.id===v); if(c){ d.total = c.balance; d.inst = Math.max(100, Math.ceil(c.balance/4/100)*100); } }
+  else if(k==='total' || k==='inst') d[k] = Number(v)||0;
+  else d[k] = v;
+  d.items = planBuildItems(d.total, d.inst, d.freq, d.start);
+  if(!d.termsEdited){ const c = d.cons.find(x=>x.id===d.contractId); d.terms = planTermsDefault(d.total, c?.units); }
+  if(d.items.length) d.start = d.items[0].due_date;   // twice-a-month plans snap to the next 15th or 30th
+  if(k==='contractId'){ renderPlanForm(); return; }
+  const si = document.getElementById('planStartInput'); if(si) si.value = d.start;
+  planRenderSched();
+  const t = document.getElementById('planTermsBox'); if(t && !d.termsEdited) t.value = d.terms;
+}
+function planItemSet(i, k, v){
+  planDraft.items[i][k] = k==='amount' ? (Number(v)||0) : v;
+  const d = planDraft, sum = Math.round(d.items.reduce((s,x)=>s+(Number(x.amount)||0),0)*100)/100, ok = Math.abs(sum-d.total) < 0.01;
+  const line = document.getElementById('planSumLine');
+  if(line){ line.style.color = ok ? 'var(--good)' : 'var(--bad)'; line.textContent = `Installments add up to ${fmtMoney(sum)} ${ok ? '— matches the plan' : '— should be '+fmtMoney(d.total)}`; }
+}
+function closePlanForm(){ const ov = document.getElementById('planFormOverlay'); ov.classList.add('hidden'); ov.innerHTML = ''; }
+async function savePlanDraft(){
+  const d = planDraft;
+  if(!(d.total>0) || !(d.inst>0)) return alert('Enter the amount the plan covers and each installment.');
+  if(!d.items.length) return alert('The plan needs at least one installment.');
+  if(d.items.some(x=>!x.due_date || !(Number(x.amount)>0))) return alert('Every installment needs a date and an amount.');
+  const sum = Math.round(d.items.reduce((s,x)=>s+Number(x.amount),0)*100)/100;
+  if(Math.abs(sum - d.total) >= 0.01) return alert(`The installments add up to ${fmtMoney(sum)} but the plan covers ${fmtMoney(d.total)}. Fix the amounts first.`);
+  const items = [...d.items].sort((a,b)=>a.due_date.localeCompare(b.due_date));
+  const { error } = await sb.rpc('save_payment_plan', { p_plan_id:d.planId||null, p_contract_id:d.contractId, p_total:d.total, p_installment:d.inst, p_frequency:d.freq,
+    p_start:items[0].due_date, p_counts_from:d.countsFrom||manilaToday(), p_terms:d.terms, p_items:items });
+  if(error){
+    const m = error.message || '';
+    return alert(/payment_plans_one_open/.test(m) ? 'This contract already has a payment plan running. Cancel it first, or edit it.' : /does not exist|schema cache/i.test(m) ? 'Run ace-feature-update-33.sql in Supabase first.' : 'Could not save the plan: ' + m);
+  }
+  const rid = d.renterId; closePlanForm(); showRenterDetail(rid);
+}
+async function planCancel(planId, renterId){
+  if(!confirm('Cancel this payment plan? Payments already recorded stay as they are. Reminders for the installments stop.')) return;
+  const { error } = await sb.from('payment_plans').update({ status:'cancelled' }).eq('id', planId);
+  if(error) return alert('Could not cancel: ' + error.message);
+  showRenterDetail(renterId);
+}
+async function planAgreedOnPaper(planId, renterId){
+  if(!confirm('Mark this plan as agreed? Use this when the renter signed a printed copy. Installment reminders start now.')) return;
+  const { error } = await sb.from('payment_plans').update({ status:'active' }).eq('id', planId);
+  if(error) return alert('Could not update: ' + error.message);
+  showRenterDetail(renterId);
+}
+async function sendPlanForSignature(planId){
+  const { data: pl } = await sb.from('payment_plans').select('signing_token, renter_id, contract_id, total_amount').eq('id', planId).single();
+  if(!pl) return;
+  let token = pl.signing_token;
+  if(!token){
+    token = crypto.randomUUID();
+    const { error } = await sb.from('payment_plans').update({ signing_token: token }).eq('id', planId);
+    if(error) return alert('Could not create the signing link: ' + error.message);
+  }
+  const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', pl.renter_id).single();
+  const link = `${SITE_BASE_URL}sign-plan.html?token=${token}`;
+  const message = `Hi ${renter?.name||''}, here is your payment plan for ${fmtMoney(pl.total_amount)}. Please review and sign it here: ${link}`;
+  const emailStatus = await trySendEmail(renter?.email, 'Please sign your payment plan', message);
+  showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number, message, 'planNotifyPanel', 'Please sign your payment plan', emailStatus);
+}
+async function printPlan(planId){
+  showPreviewOverlay('Loading payment plan…');
+  const frame = document.getElementById('previewFrame');
+  frame.srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
+  const { data: p, error } = await sb.from('payment_plans').select('*, renters(name, address)').eq('id', planId).single();
+  if(error || !p){ frame.srcdoc = `<body style="font-family:sans-serif;padding:40px;"><h2>Could not load this plan</h2><p>${bulkEsc(error?.message||'')}</p></body>`; return; }
+  const { data: its } = await sb.from('payment_plan_items').select('seq, due_date, amount').eq('plan_id', planId).order('seq');
+  const { data: cus } = await sb.from('contract_units').select('units(unit_name)').eq('contract_id', p.contract_id);
+  const unitNames = [...new Set((cus||[]).map(x=>(x.units?.unit_name||'').trim()).filter(Boolean))].join(', ');
+  const renterName = p.renters?.name || '';
+  let sigImg = '', sigNote = '';
+  if(p.signed_at && p.signature_image_path){
+    try{
+      const { data: blob } = await sb.storage.from('contract-files').download(p.signature_image_path);
+      if(blob){
+        const dataUrl = await new Promise(res=>{ const fr = new FileReader(); fr.onload = ()=>res(fr.result); fr.onerror = ()=>res(''); fr.readAsDataURL(blob); });
+        if(dataUrl) sigImg = `<img src="${dataUrl}" style="max-height:48px;max-width:100%;display:block;">`;
+      }
+    }catch(e){}
+  }
+  let when = '';
+  if(p.signed_at){
+    when = new Date(p.signed_at).toLocaleString('en-PH',{timeZone:'Asia/Manila', year:'numeric', month:'long', day:'numeric', hour:'numeric', minute:'2-digit'});
+    sigNote = `<div style="font-size:11px;color:#444;margin-top:4px;">Signed electronically by ${bulkEsc(p.signer_name||renterName)} on ${when}</div>`;
+  }
+  const items = its||[];
+  const html = `<html><head><title>Payment Plan — ${bulkEsc(renterName)}</title>
+    <style>
+      body{font-family:Georgia,serif;max-width:760px;margin:40px auto;line-height:1.6;color:#111;font-size:14px;}
+      h1{font-size:20px;text-align:center;margin-bottom:22px;letter-spacing:1px;}
+      h3{font-size:14px;margin-top:20px;margin-bottom:6px;}
+      p{margin:6px 0;text-align:justify;}
+      table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13px;}
+      th,td{border:1px solid #999;padding:6px 10px;text-align:left;} td.r,th.r{text-align:right;}
+      .sig{margin-top:70px;display:flex;justify-content:space-between;}
+      .sig div{width:45%;text-align:center;font-size:13px;}
+      .sig .line{border-top:1px solid #333;padding-top:6px;margin-top:50px;}
+      @media print{ .noprint{display:none;} }
+    </style></head><body>
+    <h1>PAYMENT PLAN AGREEMENT</h1>
+    <p>This Payment Plan Agreement is made ${when ? 'on <strong>'+when.split(' at ')[0]+'</strong>' : 'on ____________________'}, between <strong>${bulkEsc(LESSOR_NAME)}</strong>, the "Lessor", with a postal address at ${bulkEsc(LESSOR_ADDRESS)}; and <strong>${bulkEsc(renterName)}</strong>, the "Lessee", with a postal address at ${bulkEsc(p.renters?.address||'________________________')}, concerning the leased premises ${bulkEsc(unitNames)}.</p>
+    <h3>Amount and schedule</h3>
+    <p>The Lessee shall pay ${numberToWords(p.total_amount)} Pesos (${fmtMoney(p.total_amount)}) in ${items.length} installment${items.length===1?'':'s'}, ${bulkEsc((PLAN_FREQ[p.frequency]||'').toLowerCase())}, as follows:</p>
+    <table><thead><tr><th>#</th><th>Due date</th><th class="r">Amount</th></tr></thead><tbody>
+      ${items.map(x=>`<tr><td>${x.seq}</td><td>${fmtDate(x.due_date)}</td><td class="r">${fmtMoney(x.amount)}</td></tr>`).join('')}
+      <tr><td></td><td><strong>Total</strong></td><td class="r"><strong>${fmtMoney(p.total_amount)}</strong></td></tr>
+    </tbody></table>
+    ${(p.terms||'').split(/\n\s*\n/).map(block=>{ const lines = block.split('\n'); const rest = lines.slice(1).join(' ');
+      return `<h3>${bulkEsc(lines[0])}</h3>${rest ? `<p>${bulkEsc(rest)}</p>` : ''}`; }).join('')}
+    <p style="margin-top:30px;">IN WITNESS WHEREOF, the parties have signed this Agreement.</p>
+    <div class="sig">
+      <div><div class="line">${bulkEsc(LESSOR_NAME)}<br>(Lessor)</div></div>
+      <div>${sigImg ? `<div style="height:50px;margin-bottom:-50px;display:flex;align-items:flex-end;justify-content:center;">${sigImg}</div>` : ''}<div class="line">${bulkEsc(renterName)}<br>(Lessee)${sigNote}</div></div>
+    </div>
+    <p class="noprint" style="text-align:center;margin-top:30px;">This is a preview. <button onclick="window.print()">Print this plan</button></p>
+    </body></html>`;
+  document.getElementById('previewTitle').textContent = `Payment Plan — ${renterName}`;
+  frame.srcdoc = html;
+}
 
 function fillRentersFilterLocations(locs){
   const sel = document.getElementById('rentersFilterLocation');
@@ -4373,6 +4674,7 @@ if(sb){
   </div>
   <div id="idCropMsg" style="color:#ccc;font-size:13px;"></div>
 </div>
+<div id="planFormOverlay" class="hidden" style="position:fixed;inset:0;background:var(--bg);z-index:1050;overflow:auto;padding:14px;"></div>
 <div id="previewOverlay" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:1000;display:flex;flex-direction:column;">
   <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--border);">
     <strong id="previewTitle" style="color:var(--text);">Preview</strong>
