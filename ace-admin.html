@@ -447,8 +447,8 @@
         <div><label>Advance date received</label><input id="cAdvanceDate" type="date" oninput="updateAdvDepHint()"></div>
         <div><label>Advance covers (<span class="perWord">months</span>)</label><input id="cAdvancePeriods" type="number" min="0" step="1" value="0" oninput="onAdvPeriodsInput('adv'); updateAdvDepHint()"></div>
         <div><label>Deposit amount</label><input id="cDeposit" type="number" step="0.01" value="0"></div>
-        <div><label>Deposit date received</label><input id="cDepositDate" type="date" oninput="updateAdvDepHint()"></div>
-        <div><label>Deposit covers (<span class="perWord">months</span>)</label><input id="cDepositPeriods" type="number" min="0" step="1" value="0" oninput="onAdvPeriodsInput('dep'); updateAdvDepHint()"></div>
+        <div><label>Deposit date received (optional)</label><input id="cDepositDate" type="date" oninput="updateAdvDepHint()"></div>
+        <input id="cDepositPeriods" type="hidden" value="0">
         <div><label>Start date</label><input id="cStart" type="date" onchange="onEscalationChange(); updateAdvDepHint()"></div>
         <div><label id="cTermLabel">Term (months)</label><input id="cTerm" type="number" value="12" oninput="onEscalationChange()"></div>
         <div id="cDueDayField"><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="31"><p class="muted" style="margin:0;">1 to 31. In shorter months it falls on the last day.</p></div>
@@ -1058,8 +1058,8 @@ let editLoadedRent = 0, editLoadedEsc = '';
 let advDepLoaded = null;
 function advDepChanged(p){
   const o = advDepLoaded || {};
-  return (p.advance_periods>0 || p.deposit_periods>0) &&
-    (o.advance_date!==p.advance_date || o.advance_periods!==p.advance_periods || o.deposit_date!==p.deposit_date || o.deposit_periods!==p.deposit_periods);
+  return p.advance_periods>0 &&
+    (o.advance_date!==p.advance_date || o.advance_periods!==p.advance_periods);
 }
 async function applyAdvDep(contractId){
   const { data, error } = await sb.rpc('apply_advance_deposit', { p_contract_id: contractId });
@@ -1067,12 +1067,12 @@ async function applyAdvDep(contractId){
   if(data && data.recorded > 0){
     const bits = [];
     if(data.advance_through) bits.push('advance paid through ' + fmtDate(data.advance_through));
-    if(data.deposit_through) bits.push('deposit paid through ' + fmtDate(data.deposit_through));
     alert(`Marked ${data.recorded} rent period${data.recorded===1?'':'s'} as paid (${fmtMoney(data.total)}): ${bits.join(', ')}.`);
   }
 }
 function advDepCoverText(c, which){
-  const n = Number(which==='advance' ? c.advance_periods : c.deposit_periods) || 0;
+  if(which !== 'advance') return '';   // a deposit never covers rent
+  const n = Number(c.advance_periods) || 0;
   const dt = which==='advance' ? c.advance_date : c.deposit_date;
   if(!(n > 0)) return '';
   const word = ({monthly:'month', daily:'day', annual:'year'})[c.rent_period || 'monthly'];
@@ -1102,18 +1102,14 @@ function updateAdvDepHint(){
   let basis = 'contract start date';
   if(!start){
     // no contract dates yet: use the calendar month of the date received (month start to month end)
-    const first = document.getElementById('cAdvanceDate').value || document.getElementById('cDepositDate').value;
+    const first = document.getElementById('cAdvanceDate').value;
     if(first){ start = first.slice(0,7) + '-01'; basis = 'calendar month (no contract start date yet)'; }
   }
   const parts = [];
   if(start && a > 0){
     parts.push(`Advance marks rent paid ${fmtDate(start)} to ${fmtDate(coverageThrough(start, a, per))}`);
   }
-  if(start && d > 0){
-    const from = a > 0 ? nextDayISO(coverageThrough(start, a, per)) : start;
-    parts.push(`Deposit marks rent paid ${fmtDate(from)} to ${fmtDate(coverageThrough(from, d, per))}`);
-  }
-  el.textContent = parts.length ? parts.join(' · ') + ` (based on the ${basis}). Recorded as paid on the dates received.` : 'Set "covers" above to automatically mark the first rent periods as paid. Leave 0 to keep the amount on file only.';
+  el.textContent = parts.length ? parts.join(' · ') + ` (based on the ${basis}). Recorded as paid on the date received. The deposit is only held and never marks rent as paid.` : 'Set "Advance covers" to automatically mark the first rent periods as paid. Leave 0 to keep the amount on file only.';
 }
 
 // ---------- DASHBOARD ----------
@@ -2552,6 +2548,8 @@ function showNotifyPanel(renterName, email, contact, message, panelId, subject, 
       <p class="section-title">Notify ${renterName}?</p>
       <textarea id="${panelId}_msg" rows="4">${message}</textarea>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <button class="btn" type="button" onclick="shareNotify('${panelId}')">Share to Viber, Messenger or any app</button>
+        <button class="btn secondary" type="button" onclick="messengerNotify('${panelId}')">Messenger</button>
         <button class="btn secondary" type="button" onclick="copyNotifyMessage('${panelId}')">📋 Copy message</button>
         ${viberHref ? `<a class="btn" style="text-decoration:none;display:inline-block;" href="${viberHref}">💜 Open Viber</a>` : `<span class="muted">No contact number on file</span>`}
         ${smsHrefVal ? `<a class="btn secondary" style="text-decoration:none;display:inline-block;" href="${smsHrefVal}">💬 Open SMS</a>` : ''}
@@ -2562,6 +2560,20 @@ function showNotifyPanel(renterName, email, contact, message, panelId, subject, 
     </div>`;
 }
 
+async function shareNotify(panelId){
+  const text = document.getElementById(`${panelId}_msg`).value;
+  if(navigator.share){
+    try{ await navigator.share({ text }); return; }
+    catch(e){ if(e && e.name === 'AbortError') return; }   // closed the share sheet: do nothing
+  }
+  await copyNotifyMessage(panelId);   // this browser has no share sheet: copy so it can be pasted into any app
+}
+function messengerNotify(panelId){
+  const text = document.getElementById(`${panelId}_msg`).value;
+  const m = text.match(/https?:\/\/\S+/);
+  if(m){ location.href = 'fb-messenger://share/?link=' + encodeURIComponent(m[0].replace(/[).,]+$/,'')); }
+  else { copyNotifyMessage(panelId); }
+}
 async function copyNotifyMessage(panelId){
   const textarea = document.getElementById(`${panelId}_msg`);
   try{
@@ -2622,8 +2634,8 @@ async function startEditContract(id){
   document.getElementById('cAdvanceDate').value = c.advance_date || '';
   document.getElementById('cAdvancePeriods').value = c.advance_periods || 0;
   document.getElementById('cDepositDate').value = c.deposit_date || '';
-  document.getElementById('cDepositPeriods').value = c.deposit_periods || 0;
-  advDepLoaded = { advance_date: c.advance_date||null, advance_periods: c.advance_periods||0, deposit_date: c.deposit_date||null, deposit_periods: c.deposit_periods||0 };
+  document.getElementById('cDepositPeriods').value = 0;   // a deposit is held, it never covers rent
+  advDepLoaded = { advance_date: c.advance_date||null, advance_periods: c.advance_periods||0, deposit_date: c.deposit_date||null, deposit_periods: 0 };
   document.getElementById('cStart').value = c.start_date;
   document.getElementById('cTerm').value =
     c.rent_period === 'daily' ? (c.term_days||30) :
@@ -2831,7 +2843,6 @@ async function saveContract(){
   };
 
   if(payload.advance_periods > 0 && !payload.advance_date) return alert('Enter the date the advance was received.');
-  if(payload.deposit_periods > 0 && !payload.deposit_date) return alert('Enter the date the deposit was received.');
   if((payload.advance_date && payload.advance_date > manilaToday()) || (payload.deposit_date && payload.deposit_date > manilaToday())) return alert('The advance / deposit date cannot be in the future.');
 
   const { data: unitRows } = await sb.from('units').select('id, unit_name').in('id', unitIds);
