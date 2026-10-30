@@ -2266,9 +2266,20 @@ function cancelEditRenter(){
 
 // ---------- RENTER DETAIL CARD (all units they hold, current + past) ----------
 async function showRenterDetail(renterId, fromPop){
+  try{ await showRenterDetailInner(renterId, fromPop); }
+  catch(err){
+    console.error('renter detail failed', err);
+    const pn = document.getElementById('renterDetailPanel');
+    pn.innerHTML = `<div class="rdWrap"><button class="btn secondary big" onclick="closeRenterDetail()">&larr; Back</button>
+      <div class="card" style="margin-top:12px;"><p class="section-title">This renter could not be opened</p>
+      <p class="muted">${bulkEsc((err && err.message) || String(err))}</p>
+      <button class="btn big" onclick="showRenterDetail('${renterId}')">Try again</button></div></div>`;
+  }
+}
+async function showRenterDetailInner(renterId, fromPop){
   { const pn = document.getElementById('renterDetailPanel'); if(!fromPop && pn.dataset.renter !== renterId) navPush({ tab:curTab, renter:renterId }); pn.dataset.renter = renterId; }
-  const { data: r } = await sb.from('renters').select('*').eq('id', renterId).single();
-  if(!r) return;
+  const { data: r, error: rErr } = await sb.from('renters').select('*').eq('id', renterId).single();
+  if(!r) throw new Error('Could not load this renter' + (rErr ? ': ' + rErr.message : '.'));
   const { data: units } = await sb.from('v_renter_units').select('*').eq('renter_id', renterId);
   const { data: rev } = await sb.from('v_renter_revenue').select('*').eq('renter_id', renterId).maybeSingle();
   const { data: bals } = await sb.from('v_contract_balance')
