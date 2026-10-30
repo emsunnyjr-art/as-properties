@@ -139,6 +139,7 @@
     <small id="todayLabel"></small>
   </div>
   <div>
+    <button id="navBackBtn" class="btn secondary small hidden" onclick="navBack()">&larr; Back</button>
     <button class="btn secondary small deskOnly" onclick="showChangePassword()">Change Password</button>
     <button class="btn secondary small deskOnly" onclick="logoutApp()">Log out</button>
     <button class="btn secondary small" onclick="loadAll()">Refresh</button>
@@ -1140,14 +1141,36 @@ function balanceCellHtml(b, isActive){
   return isActive ? '<span class="badge b-paid">Paid up</span>' : '<span class="muted">—</span>';
 }
 
-function switchToTab(name){
+// ---------- Back button: remembers where you came from ----------
+let navDepth = 0, curTab = 'dashboard';
+try{ window.history.replaceState({ tab:'dashboard', depth:0 }, ''); }catch(_){}
+function updateBackBtn(){ const b = document.getElementById('navBackBtn'); if(b) b.classList.toggle('hidden', navDepth <= 0); }
+function navPush(state){ navDepth++; try{ window.history.pushState({ ...state, depth:navDepth }, ''); }catch(_){} updateBackBtn(); }
+function navBack(){
+  const st = window.history.state;
+  if(st && st.depth > 0) window.history.back(); else switchToTab('dashboard');
+}
+window.addEventListener('popstate', e=>{
+  const st = e.state || { tab:'dashboard', depth:0 };
+  navDepth = st.depth || 0;
+  switchToTab(st.tab || 'dashboard', true);
+  const panel = document.getElementById('renterDetailPanel');
+  if(st.renter){ if(panel.dataset.renter !== st.renter) showRenterDetail(st.renter, true); }
+  else clearRenterDetail();
+  if(st.stat){ if(dashStatOpen !== st.stat) showStatList(st.stat, false, true); }
+  else if(dashStatOpen){ dashStatOpen = null; const sp = document.getElementById('statListPanel'); if(sp) sp.innerHTML = ''; }
+  updateBackBtn();
+});
+function switchToTab(name, fromPop){
+  if(!fromPop && name !== curTab) navPush({ tab:name });
+  curTab = name;
   document.querySelectorAll('#tabNav button').forEach(b=>b.classList.toggle('active', b.dataset.tab === name));
   const bottomKey = ['dashboard','renters','payments'].includes(name) ? name : 'more';
   document.querySelectorAll('#bottomNav button').forEach(b=>b.classList.toggle('active', b.dataset.go === bottomKey));
   document.querySelectorAll('main > section').forEach(s=>s.classList.add('hidden'));
   document.getElementById('tab-'+name).classList.remove('hidden');
   if(name === 'reports' && window.Chart) setTimeout(()=>Object.values(Chart.instances||{}).forEach(c=>{ try{ c.resize(); }catch(_){} }), 50);
-  window.scrollTo({ top:0, behavior:'smooth' });
+  if(!fromPop) window.scrollTo({ top:0, behavior:'smooth' });
 }
 
 function openPaymentsForContract(contractId){
@@ -2220,7 +2243,7 @@ async function startEditRenter(id){
   showCurrentFile('rIdFileCurrent', r.id_file_path, r.id_file_name, 'Renter ID', 'No ID uploaded yet.');
   document.getElementById('renterFormTitle').textContent = 'Editing renter';
   document.getElementById('renterSubmitBtn').textContent = 'Save changes';
-  closeRenterDetail();
+  clearRenterDetail();
   document.getElementById('renterFormCard').classList.remove('hidden');
   document.getElementById('renterFormTitle').scrollIntoView({behavior:'smooth'});
 }
@@ -2242,7 +2265,8 @@ function cancelEditRenter(){
 }
 
 // ---------- RENTER DETAIL CARD (all units they hold, current + past) ----------
-async function showRenterDetail(renterId){
+async function showRenterDetail(renterId, fromPop){
+  { const pn = document.getElementById('renterDetailPanel'); if(!fromPop && pn.dataset.renter !== renterId) navPush({ tab:curTab, renter:renterId }); pn.dataset.renter = renterId; }
   const { data: r } = await sb.from('renters').select('*').eq('id', renterId).single();
   if(!r) return;
   const { data: units } = await sb.from('v_renter_units').select('*').eq('renter_id', renterId);
@@ -2290,7 +2314,7 @@ async function showRenterDetail(renterId){
   }catch(e){}
   const panel = document.getElementById('renterDetailPanel');
   panel.innerHTML = `<div class="rdWrap">
-    <button class="btn secondary big" onclick="closeRenterDetail()">Back to renters</button>
+    <button class="btn secondary big" onclick="closeRenterDetail()">&larr; Back</button>
     <div style="margin:12px 0 4px;"><span style="font-size:22px;font-weight:800;">${bulkEsc(r.name)}</span>${r.business_name ? ` <span class="muted">${bulkEsc(r.business_name)}</span>` : ''}</div>
     <div class="muted">${r.renter_code ? bulkEsc(r.renter_code)+' · ' : ''}${activeContracts.length ? bulkEsc(activeContracts.map(c=>c.unit_names.join(', ')).join(' | ')) : 'No unit rented now'}</div>
     <div class="card" style="margin-top:12px;">
@@ -2351,7 +2375,11 @@ async function showRenterDetail(renterId){
   }
   panel.scrollTop = 0;
 }
-function closeRenterDetail(){ document.getElementById('renterDetailPanel').innerHTML = ''; }
+function clearRenterDetail(){ const pn = document.getElementById('renterDetailPanel'); pn.innerHTML = ''; pn.dataset.renter = ''; }
+function closeRenterDetail(){
+  const st = window.history.state;
+  if(st && st.renter) window.history.back(); else clearRenterDetail();
+}
 
 // ---------- PAYMENT PLANS (installments for late dues, signed by the renter) ----------
 const PLAN_FREQ = { weekly:'Every week', every_2_weeks:'Every 2 weeks', twice_monthly:'Twice a month (15th and 30th)', monthly:'Every month' };
@@ -4277,10 +4305,17 @@ const STAT_TITLES = { occupied:'Occupied units', vacant:'Vacant units', unpaid:'
 const STAT_VALUE  = { occupied:'Monthly rent', vacant:'Asking price total', unpaid:'Unpaid balance', expiring:'Contracts' };
 const STAT_COUNT  = { occupied:'Units', vacant:'Units', unpaid:'Renters', expiring:'Contracts' };
 
-async function showStatList(kind, keepOpen){
+async function showStatList(kind, keepOpen, fromPop){
   const panel = document.getElementById('statListPanel');
-  if(!keepOpen && dashStatOpen === kind){ dashStatOpen = null; panel.innerHTML = ''; return; }
+  if(!keepOpen && dashStatOpen === kind){
+    if(!fromPop && window.history.state && window.history.state.stat){ window.history.back(); return; }
+    dashStatOpen = null; panel.innerHTML = ''; return;
+  }
   if(!dashStat){ panel.innerHTML = ''; return; }
+  if(!keepOpen && !fromPop){
+    if(window.history.state && window.history.state.stat){ try{ window.history.replaceState({ ...window.history.state, stat:kind }, ''); }catch(_){} }
+    else navPush({ tab:curTab, stat:kind });
+  }
   if(dashStatOpen !== kind && !keepOpen) statF.q = '';
   dashStatOpen = kind;
   panel.innerHTML = '<div class="card" style="border-color:var(--accent);"><p class="muted">Loading…</p></div>';
