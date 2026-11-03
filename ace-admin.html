@@ -602,6 +602,10 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
       <p class="section-title">Contract you are working on</p>
       <p class="muted" style="margin-top:-6px;">The schedule, itemized bill and every payment below apply to this contract only. A renter with two contracts has two entries.</p>
       <select id="payContractSelect" onchange="loadPaymentSchedule(); loadItemizedBill();"></select>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;">
+        <button class="btn secondary small" onclick="openPaidHistory({contractId:document.getElementById('payContractSelect').value})">📜 Paid history — this contract</button>
+        <button class="btn secondary small" onclick="openPaidHistory({contractId:document.getElementById('payContractSelect').value, wholeRenter:true})">📜 Paid history — all this renter's units</button>
+      </div>
       <div id="payForBanner"></div>
     </div>
 
@@ -2594,6 +2598,7 @@ async function showRenterDetailInner(renterId, fromPop){
       <div class="muted" style="font-size:14px;">${totalOwed>0 ? 'Owed now' : 'Nothing owed'}</div>
       <div class="rdOwed" style="color:${totalOwed>0?'var(--bad)':'var(--good)'};">${fmtMoney(totalOwed)}</div>
       ${mainBtn}
+      <button class="btn secondary big" style="margin-top:8px;" onclick="openPaidHistory({renterId:'${r.id}'})">📜 Paid history per unit</button>
     </div>
     ${planHtml}
     <div class="card">
@@ -3633,6 +3638,7 @@ function contractRowHtml(c, unitNames, opts){
         ${opts.historyBtn||''}
         <button class="btn secondary small" onclick="startEditContract('${c.id}')">Edit</button>
         <button class="btn secondary small" onclick="printContract('${c.id}')">Preview</button>
+        <button class="btn secondary small" onclick="openPaidHistory({contractId:'${c.id}'})">📜 Paid history</button>
         ${c.signed_file_path ? `<button class="btn secondary small" onclick="viewContractFile('${c.signed_file_path}')">📄 File</button>` : ''}
         ${c.advance_proof_path ? `<button class="btn secondary small" onclick="viewStoredFile('${c.advance_proof_path}','Advance proof')">💵 Advance</button>` : ''}
         ${c.deposit_proof_path ? `<button class="btn secondary small" onclick="viewStoredFile('${c.deposit_proof_path}','Deposit proof')">🔒 Deposit</button>` : ''}
@@ -5200,6 +5206,76 @@ if(sb){
 </div>
 
 <script>
+async function openPaidHistory(o){
+  o = o || {};
+  showPreviewOverlay('Paid history');
+  const frame = document.getElementById('previewFrame');
+  frame.removeAttribute('src');
+  frame.srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
+  try{
+    let renterId = o.renterId, only = null;
+    if(!renterId){
+      const { data: c0, error: e0 } = await sb.from('contracts').select('id, renter_id').eq('id', o.contractId).single();
+      if(e0 || !c0) throw new Error('Contract not found.');
+      renterId = c0.renter_id; if(!o.wholeRenter) only = c0.id;
+    }
+    const [{ data: ren }, { data: cons, error: ce }] = await Promise.all([
+      sb.from('renters').select('name, business_name, renter_code').eq('id', renterId).single(),
+      sb.from('contracts').select('id, status, rent_amount, rent_period, start_date, end_date, recover_dues').eq('renter_id', renterId).order('start_date', { ascending:false })
+    ]);
+    if(ce) throw ce;
+    const contracts = (cons||[]).filter(c=>!only || c.id===only);
+    const cids = contracts.map(c=>c.id);
+    const unitsBy = {}, rows = [], led = {};
+    if(cids.length){
+      const { data: cu } = await sb.from('contract_units').select('contract_id, units(unit_name, buildings(name, locations(name)))').in('contract_id', cids);
+      (cu||[]).forEach(x=>{ const u = x.units, b = u && u.buildings; (unitsBy[x.contract_id] ||= []).push({ n:u?.unit_name||'—', b:b?.name||'', l:b?.locations?.name||'' }); });
+      for(let i=0;i<cids.length;i+=100){
+        const { data: rp } = await sb.from('rent_payments').select('id, contract_id, period_start, period_end, due_date, amount_due, amount_paid, status').in('contract_id', cids.slice(i,i+100)).order('period_start').range(0,4999);
+        (rp||[]).forEach(r=>rows.push(r));
+      }
+      const rids = rows.map(r=>r.id);
+      for(let i=0;i<rids.length;i+=150){
+        const { data: pl } = await sb.from('payments').select('rent_payment_id, kind, amount, received_date, method, reference').in('rent_payment_id', rids.slice(i,i+150)).order('received_date');
+        (pl||[]).forEach(p=>{ (led[p.rent_payment_id] ||= []).push(p); });
+      }
+    }
+    const esc = bulkEsc, today = manilaToday();
+    const money = n => '₱' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+    const dt = d => d ? new Date(d+'T00:00:00').toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}) : '—';
+    const mth = d => d ? new Date(d+'T00:00:00').toLocaleDateString(undefined,{year:'numeric',month:'short'}) : '—';
+    const stCol = { paid:'#1a7f37', partial:'#b26a00', overdue:'#c0392b', pending:'#666', waived:'#888' };
+    let body = '', gDue = 0, gPaid = 0;
+    contracts.forEach(c=>{
+      const us = unitsBy[c.id] || [], label = us.map(x=>x.n).join(', ') || '—';
+      const where = [...new Set(us.map(x=>[x.b,x.l].filter(Boolean).join(' · ')).filter(Boolean))].join(' | ');
+      const mine = rows.filter(r=>r.contract_id===c.id);
+      const shown = mine.filter(r=>r.due_date <= today || Number(r.amount_paid) > 0 || r.status==='waived');
+      const hidden = mine.length - shown.length;
+      const due = shown.filter(r=>r.status!=='waived').reduce((a,r)=>a+Number(r.amount_due),0), paid = shown.reduce((a,r)=>a+Number(r.amount_paid),0);
+      gDue += due; gPaid += paid;
+      body += `<h2>${esc(label)}</h2><div class="sub">${esc(where)}<br>Contract ${dt(c.start_date)} – ${dt(c.end_date)} · ${money(c.rent_amount)} / ${esc(c.rent_period||'month')} · <b>${esc(c.status)}</b></div>
+        <div class="sum">Billed ${money(due)} · Paid <b>${money(paid)}</b> · Balance <b style="color:${due-paid>0.004?'#c0392b':'#1a7f37'}">${money(Math.max(0,due-paid))}</b></div>
+        <table><thead><tr><th>Period</th><th>Due</th><th class="n">Amount</th><th class="n">Paid</th><th>Status</th><th>Payments received</th></tr></thead><tbody>
+        ${shown.map(r=>{ const pl = led[r.id]||[];
+          const pays = pl.map(p=>`${dt(p.received_date)} · ${esc(p.method||'')}${p.kind==='opening'?' (opening)':''}${p.kind==='reversal'?' (reversed)':''} · ${p.amount<0?'−':''}${money(Math.abs(p.amount))}${p.reference?' · '+esc(p.reference):''}`).join('<br>') || '<span class="m">—</span>';
+          return `<tr><td>${mth(r.period_start)}</td><td>${dt(r.due_date)}</td><td class="n">${money(r.amount_due)}</td><td class="n">${money(r.amount_paid)}</td><td style="color:${stCol[r.status]||'#666'};font-weight:600">${esc(r.status)}</td><td>${pays}</td></tr>`; }).join('') || '<tr><td colspan="6" class="m">Nothing billed yet.</td></tr>'}
+        </tbody></table>${hidden>0 ? `<div class="m">${hidden} later month${hidden===1?'':'s'} not yet due ${hidden===1?'is':'are'} not shown.</div>` : ''}`;
+    });
+    const title = `${ren?.name||'Renter'}${ren?.business_name ? ' — '+ren.business_name : ''}`;
+    frame.srcdoc = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body><style>
+      body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#111;background:#fff;padding:18px;max-width:900px;margin:0 auto}
+      h1{font-size:21px;margin:0 0 2px}h2{font-size:17px;margin:22px 0 2px;border-top:2px solid #333;padding-top:10px}.sub,.m{color:#666;font-size:13px}.sum{margin:6px 0 8px;font-size:14px}
+      table{border-collapse:collapse;width:100%;font-size:13px}th,td{border-bottom:1px solid #ddd;padding:5px 6px;text-align:left;vertical-align:top}th{background:#f3f3f3}.n{text-align:right;white-space:nowrap}
+      @media print{body{padding:0}}</style>
+      <h1>Paid history — ${esc(title)}</h1><div class="sub">${esc(ren?.renter_code||'')} · as of ${dt(today)} · ${only?'this contract':'all contracts and units'}</div>
+      ${contracts.length>1||!only ? `<div class="sum" style="margin-top:10px"><b>Total billed ${money(gDue)} · Total paid ${money(gPaid)} · Balance ${money(Math.max(0,gDue-gPaid))}</b></div>` : ''}
+      ${body || '<p class="m">No contracts on file.</p>'}</body>`;
+    document.getElementById('previewTitle').textContent = 'Paid history — ' + title;
+  }catch(err){
+    frame.srcdoc = `<body style="font-family:sans-serif;padding:40px;"><h2>Could not load the paid history</h2><p>${bulkEsc(err.message||String(err))}</p></body>`;
+  }
+}
 function showPreviewOverlay(title){
   document.getElementById('previewTitle').textContent = title || 'Preview';
   document.getElementById('previewOverlay').classList.remove('hidden');
