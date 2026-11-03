@@ -384,6 +384,10 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
     </details>
     <div class="card hidden" id="renterFormCard">
       <p class="section-title" id="renterFormTitle">Add renter</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+        <select id="rEditPick" style="flex:1;min-width:200px;margin:0;"><option value="">✏️ Edit a saved renter…</option></select>
+        <button type="button" class="btn secondary small" onclick="const v=document.getElementById('rEditPick').value; if(v) startEditRenter(v);">✏️ Edit</button>
+      </div>
       <div class="row">
         <div><label>Full name</label><input id="rName"></div>
         <div><label>Business name</label><input id="rBusiness"></div>
@@ -400,7 +404,7 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
         <p class="muted" id="rIdFileCurrent" style="margin:2px 0 8px 0;"></p>
       </div>
       <button class="btn big" id="renterSubmitBtn" onclick="saveRenter()">Save renter</button>
-      <button class="btn secondary big" id="cancelRenterEditBtn" onclick="cancelEditRenter()">Cancel</button>
+      <button class="btn secondary big" id="cancelRenterEditBtn" onclick="cancelRenterForm()">Cancel</button>
     </div>
 
 
@@ -437,6 +441,7 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
             <option value="new">New renter (fill in below)</option>
           </select>
         </div>
+        <div style="margin:6px 0;"><a href="#" onclick="addRenterFromContract();return false;" style="font-weight:700;">➕ Add a new renter with ID photo</a> <span class="muted">— opens the renter page, and brings you back here when saved</span></div>
         <div id="existingRenterBlock" class="hidden">
           <label>Select renter</label>
           <input id="cRenterSearch" placeholder="Type to search name / business…" oninput="filterRenterOptions()" style="margin-bottom:6px;">
@@ -2066,7 +2071,9 @@ async function loadUnitsTable(){
 // ---------- ID PHOTO: find the card, trim the edges, keep only the ID ----------
 let rIdCropped = null;      // { blob, name } ready to upload with the renter
 let rIdOriginalFile = null; // the photo as picked (so it can be re-cropped)
-const idCrop = { src:null, rect:null, scale:1, fit:1, zoom:1, drag:null, ptrs:{} };
+const idCrop = { src:null, rect:null, scale:1, fit:1, zoom:1, drag:null, ptrs:{}, mode:'id' };
+let rFaceCropped = null;   // { blob } face photo cut from the ID
+let rIdCroppedCanvas = null;
 const ID_MAX_SRC = 2000, ID_MAX_OUT = 1600;
 
 function onIdFileSelected(){
@@ -2079,7 +2086,17 @@ function onIdFileSelected(){
   openIdCropper(file);
 }
 
+function setIdCropMode(m){
+  idCrop.mode = m;
+  const face = m==='face';
+  document.getElementById('idCropTitle').textContent = face ? 'Crop the FACE — drag the corners so only the face photo on the ID is inside' : 'Crop the ID — drag the corners (or the box) so only the ID is inside. Zoom to place them exactly; drag outside the box to move around.';
+  document.getElementById('idCropRotBtn').classList.toggle('hidden', face);
+  document.getElementById('idCropWholeBtn').classList.toggle('hidden', face);
+  document.getElementById('idCropApplyBtn').textContent = face ? '✔ Use this face' : '✔ Use cropped ID';
+  document.getElementById('idCropCancelBtn').textContent = face ? 'Skip face' : 'Cancel';
+}
 function openIdCropper(file){
+  setIdCropMode('id');
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = ()=>{
@@ -2177,7 +2194,38 @@ function bindIdCropEvents(){
 }
 
 // Finds the ID card as the area that differs from the surrounding background.
+async function faceAuto(){
+  const W = idCrop.src.width, H = idCrop.src.height; let rect = null, msg = '';
+  try{
+    if(window.FaceDetector){
+      const f = await new window.FaceDetector({ fastMode:true, maxDetectedFaces:3 }).detect(idCrop.src);
+      if(f.length){ const b = f.sort((a,c)=>c.boundingBox.width-a.boundingBox.width)[0].boundingBox;
+        const px = b.width*0.45, py = b.height*0.5;
+        const x = Math.max(0,b.x-px), y = Math.max(0,b.y-py*1.1), x2 = Math.min(W,b.x+b.width+px), y2 = Math.min(H,b.y+b.height+py*0.8);
+        rect = { x, y, w:x2-x, h:y2-y }; msg = 'Face found. Adjust the corners if needed, then tap "Use this face".'; }
+    }
+  }catch(e){}
+  if(!rect){ const w = W*0.3, h = Math.min(H*0.7, w*1.3); rect = { x:W*0.05, y:H*0.2, w, h }; msg = 'Drag the corners so only the face photo on the ID is inside (zoom in for accuracy).'; }
+  idCrop.rect = rect; document.getElementById('idCropMsg').textContent = msg; drawIdCrop();
+}
+function openFaceCropper(canvas){
+  setIdCropMode('face');
+  const c = document.createElement('canvas'); c.width = canvas.width; c.height = canvas.height; c.getContext('2d').drawImage(canvas,0,0);
+  idCrop.src = c; idCrop.zoom = 1;
+  document.getElementById('idCropZoom').value = 1; document.getElementById('idCropZoomLbl').textContent = '100%';
+  document.getElementById('idCropOverlay').classList.remove('hidden');
+  layoutIdCropCanvas(); faceAuto();
+}
+async function faceFromSavedId(){
+  if(!rIdSaved || !rIdSaved.url) return alert('The saved ID picture is not ready yet — try again in a moment.');
+  try{
+    const blob = await (await fetch(rIdSaved.url)).blob(); const bmp = await createImageBitmap(blob);
+    const k = Math.min(1, ID_MAX_SRC/Math.max(bmp.width,bmp.height)); const c = document.createElement('canvas'); c.width = Math.round(bmp.width*k); c.height = Math.round(bmp.height*k);
+    c.getContext('2d').drawImage(bmp,0,0,c.width,c.height); openFaceCropper(c);
+  }catch(e){ alert('Could not open the saved ID to cut the face: ' + e.message); }
+}
 function idCropAuto(){
+  if(idCrop.mode==='face') return faceAuto();
   const src = idCrop.src, W0 = src.width, H0 = src.height;
   const k = Math.min(1, 400/Math.max(W0,H0));
   const w = Math.max(8, Math.round(W0*k)), h = Math.max(8, Math.round(H0*k));
@@ -2240,22 +2288,28 @@ function idCropRotate(){
 }
 function idCropCancel(){
   document.getElementById('idCropOverlay').classList.add('hidden');
+  if(idCrop.mode==='face'){ renderIdBox(); return; }
   // keep the original photo as picked (uncropped) so nothing is lost
   rIdCropped = null; renderIdPreview();
 }
 function idCropApply(){
-  const r = idCrop.rect, k = Math.min(1, ID_MAX_OUT/Math.max(r.w, r.h));
+  const face = idCrop.mode==='face';
+  const r = idCrop.rect, k = Math.min(1, (face?640:ID_MAX_OUT)/Math.max(r.w, r.h));
   const out = document.createElement('canvas');
   out.width = Math.round(r.w*k); out.height = Math.round(r.h*k);
   out.getContext('2d').drawImage(idCrop.src, r.x, r.y, r.w, r.h, 0, 0, out.width, out.height);
   out.toBlob(blob=>{
     if(!blob) return alert('Could not create the cropped image.');
+    if(face){ rFaceCropped = { blob }; document.getElementById('idCropOverlay').classList.add('hidden'); renderIdBox(); return; }
+    rIdCroppedCanvas = out;
     const base = (rIdOriginalFile?.name || 'id').replace(/\.[^.]+$/, '');
     rIdCropped = { blob, name: base + '-id.jpg' };
     document.getElementById('idCropOverlay').classList.add('hidden');
     renderIdPreview();
-  }, 'image/jpeg', 0.9);
+    openFaceCropper(out);   // next: pick the face from the cropped ID
+  }, 'image/jpeg', face ? 0.92 : 0.9);
 }
+let rFaceSaved = null;
 let rIdSaved = null;   // { path, url } of the ID already on file for the renter being edited
 let rIdBlobUrl = null;
 function renderIdPreview(){ renderIdBox(); }
@@ -2287,6 +2341,8 @@ function renderIdBox(){
     <button type="button" class="btn secondary small" onclick="document.getElementById('rIdCam').click()">📷 Take photo</button>`
     + (zoomUrl ? ` <button type="button" class="btn secondary small" onclick="openIdZoom(document.getElementById('rIdBox')._zoomUrl,'Renter ID')">🔍 Zoom</button>` : '')
     + (rIdOriginalFile ? ` <button type="button" class="btn secondary small" onclick="openIdCropper(rIdOriginalFile)">✂ Re-crop</button>` : '')
+    + (rIdCroppedCanvas && rIdCropped ? ` <button type="button" class="btn secondary small" onclick="openFaceCropper(rIdCroppedCanvas)">🙂 ${rFaceCropped?'Re-crop face':'Crop face'}</button>` : (rIdSaved && rIdSaved.url ? ` <button type="button" class="btn secondary small" onclick="faceFromSavedId()">🙂 ${rFaceCropped?'Re-crop face':'Crop face from saved ID'}</button>` : ''))
+    + (rFaceCropped ? ` <span class="muted" style="align-self:center;">Face photo ready ✔ (shown only when the renter card is opened)</span>` : (rFaceSaved ? ` <span class="muted" style="align-self:center;">Face photo on file ✔</span>` : ''))
     + (note ? ` <span class="muted" style="align-self:center;">${note}</span>` : '');
 }
 function idBoxTap(){
@@ -2354,6 +2410,15 @@ function bindIdZoom(){
   const end = e=>{ delete idz.ptrs[e.pointerId]; idz.drag = null; };
   st.addEventListener('pointerup', end); st.addEventListener('pointercancel', end);
 }
+async function uploadFaceBlob(renterId){
+  if(!rFaceCropped) return;
+  const path = `renters/${renterId}/face-${Date.now()}.jpg`;
+  const { error } = await sb.storage.from('contract-files').upload(path, rFaceCropped.blob, { upsert:true, contentType:'image/jpeg' });
+  if(error){ alert('Face photo upload failed: ' + error.message); return; }
+  const { error: e2 } = await sb.from('renters').update({ face_path: path }).eq('id', renterId);
+  if(e2) alert('Face photo was uploaded but could not be linked — run update 36 in Supabase first. (' + e2.message + ')');
+  rFaceCropped = null;
+}
 async function uploadIdBlob(renterId){
   if(!rIdCropped) return false;
   const path = `renters/${renterId}/${Date.now()}-${rIdCropped.name}`;
@@ -2385,14 +2450,37 @@ async function saveRenter(){
   if(!(await uploadIdBlob(renterId))){
     await uploadFileToTable('rIdFile', 'renters', 'renters', 'id', renterId, 'id_file_path', 'id_file_name');
   }
+  await uploadFaceBlob(renterId);
+  const back = renterReturnTo; renterReturnTo = null;
   cancelEditRenter();
-  loadRenters(); loadContractCascadingData();
+  loadRenters();
+  await loadContractCascadingData();
+  if(back === 'contracts'){
+    switchToTab('contracts');
+    renterModeTouched = true;
+    document.getElementById('renterMode').value = 'existing'; onRenterModeChange();
+    document.getElementById('cRenterSearch').value = ''; document.getElementById('cRenterBldFilter').value = '';
+    renderRenterOptions(renterId);
+    document.getElementById('cRenterExisting').value = renterId; onRenterSelected();
+  }
+}
+let renterReturnTo = null;
+function cancelRenterForm(){
+  const back = renterReturnTo; renterReturnTo = null; cancelEditRenter();
+  if(back === 'contracts') switchToTab('contracts');
+}
+function addRenterFromContract(){
+  renterReturnTo = 'contracts';
+  switchToTab('renters');
+  cancelEditRenter(); renterReturnTo = 'contracts';
+  openRenterForm();
 }
 
 async function startEditRenter(id){
   const { data: r } = await sb.from('renters').select('*').eq('id', id).single();
   if(!r) return;
   editingRenterId = id;
+  { const pk = document.getElementById('rEditPick'); if(pk) pk.value = id; }
   document.getElementById('rName').value = r.name;
   document.getElementById('rBusiness').value = r.business_name || '';
   document.getElementById('rContact').value = r.contact_number || '';
@@ -2401,6 +2489,7 @@ async function startEditRenter(id){
   document.getElementById('rIdFile').value = '';
   rIdCropped = null; rIdOriginalFile = null; renderIdPreview();
   showCurrentFile('rIdFileCurrent', r.id_file_path, r.id_file_name, 'Renter ID', 'No ID uploaded yet.');
+  rFaceSaved = r.face_path || null; rFaceCropped = null;
   loadSavedIdForBox(r.id_file_path);
   document.getElementById('renterFormTitle').textContent = 'Editing renter';
   document.getElementById('renterSubmitBtn').textContent = 'Save changes';
@@ -2416,13 +2505,14 @@ function openRenterForm(){
   document.getElementById('renterFormCard').scrollIntoView({behavior:'smooth', block:'start'});
 }
 function cancelEditRenter(){
-  editingRenterId = null;
+  editingRenterId = null; rFaceCropped = null; rFaceSaved = null; rIdCroppedCanvas = null;
   document.getElementById('renterFormCard').classList.add('hidden');
   ['rName','rBusiness','rContact','rEmail','rAddress'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('rIdFile').value = '';
   rIdCropped = null; rIdOriginalFile = null; renderIdPreview();
   document.getElementById('rIdFileCurrent').textContent = '';
   rIdSaved = null; renderIdBox();
+  { const pk = document.getElementById('rEditPick'); if(pk) pk.value = ''; }
   document.getElementById('renterFormTitle').textContent = 'Add renter';
   document.getElementById('renterSubmitBtn').textContent = 'Save renter';
 }
@@ -2489,6 +2579,7 @@ async function showRenterDetailInner(renterId, fromPop){
   const panel = document.getElementById('renterDetailPanel');
   panel.innerHTML = `<div class="rdWrap">
     <button class="btn secondary big" onclick="closeRenterDetail()">&larr; Back</button>
+    <div id="renterDetailFace" style="margin-top:12px;"></div>
     <div style="margin:12px 0 4px;"><span style="font-size:22px;font-weight:800;">${bulkEsc(r.name)}</span>${r.business_name ? ` <span class="muted">${bulkEsc(r.business_name)}</span>` : ''}</div>
     <div class="muted">${r.renter_code ? bulkEsc(r.renter_code)+' · ' : ''}${activeContracts.length ? bulkEsc(activeContracts.map(c=>c.unit_names.join(', ')).join(' | ')) : 'No unit rented now'}</div>
     <div class="card" style="margin-top:12px;">
@@ -2546,6 +2637,13 @@ async function showRenterDetailInner(renterId, fromPop){
     }
   } else if(r.id_file_path){
     document.getElementById('renterDetailId').innerHTML = `<button class="btn secondary small" onclick="viewStoredFile('${r.id_file_path.replace(/'/g,"\\'")}','ID')">🪪 View ID</button>`;
+  }
+  if(r.face_path){
+    try{
+      const { data: fu } = await sb.storage.from('contract-files').createSignedUrl(r.face_path, 600);
+      const fb = document.getElementById('renterDetailFace');
+      if(fu && fb) fb.innerHTML = `<img src="${fu.signedUrl}" alt="Face" onclick="openIdZoom(this.src,'${(r.name||'').replace(/'/g,"\\'")}')" style="width:96px;height:120px;object-fit:cover;border-radius:10px;border:1px solid var(--line,#444);cursor:pointer;" title="Tap to enlarge">`;
+    }catch(e){}
   }
   panel.scrollTop = 0;
 }
@@ -2870,6 +2968,7 @@ async function loadRenters(){
   const owed = {}, topC = {}, proofOf = {};
   (balRows||[]).forEach(b=>{ const n = Number(b.balance)||0; if(n<=0) return; owed[b.renter_id] = (owed[b.renter_id]||0) + n; if(!topC[b.renter_id] || n > topC[b.renter_id].n) topC[b.renter_id] = { id:b.contract_id, n }; });
   (prfRows||[]).forEach(x=>{ (proofOf[x.renter_id] ||= []).push(x.id); });
+  { const pk = document.getElementById('rEditPick'); if(pk){ pk.innerHTML = '<option value="">✏️ Edit a saved renter…</option>' + (data||[]).map(r=>`<option value="${r.id}">${bulkEsc(r.name)}${r.business_name?' — '+bulkEsc(r.business_name):''}</option>`).join(''); } }
   fillRentersFilterLocations(locs||[]);
   if(rentersFilterBuildingsStale || !document.getElementById('rentersFilterBuilding').options.length){
     fillRentersFilterBuildings(blds||[]); rentersFilterBuildingsStale = false;
@@ -2925,7 +3024,8 @@ async function loadRenters(){
       <div class="top"><div class="nm">${bulkEsc(r.name)}${r.business_name ? ` <span class="muted">${bulkEsc(r.business_name)}</span>` : ''}</div>${amt}</div>
       <div class="sub">${r.renter_code ? bulkEsc(r.renter_code)+' · ' : ''}${where(r)}</div>
       <div>${tag}</div>
-      <div class="acts ${main?'':'one'}">${main ? detailBtn + main : detailBtn}</div></div>`;
+      <div class="acts ${main?'':'one'}">${main ? detailBtn + main : detailBtn}</div>
+      <div style="margin-top:6px;"><button class="btn secondary small" onclick="startEditRenter('${r.id}')">✏️ Edit</button></div></div>`;
   }).join('') || '<p class="muted">No renters match this filter.</p>';
 }
 let renterChip = 'all';
@@ -5028,7 +5128,7 @@ if(sb){
 </script>
 
 <div id="idCropOverlay" class="hidden" style="position:fixed;inset:0;background:#05070a;z-index:1100;display:flex;flex-direction:column;align-items:center;padding:12px;gap:8px;">
-  <div style="color:#fff;font-weight:700;text-align:center;">Crop the ID — drag the corners (or the box) so only the ID is inside. Zoom to place them exactly; drag outside the box to move around.</div>
+  <div id="idCropTitle" style="color:#fff;font-weight:700;text-align:center;">Crop the ID — drag the corners (or the box) so only the ID is inside. Zoom to place them exactly; drag outside the box to move around.</div>
   <div id="idCropWrap" style="flex:1;min-height:0;width:100%;overflow:auto;display:flex;border-radius:6px;background:#000;">
     <canvas id="idCropCanvas" style="touch-action:none;max-width:none;margin:auto;flex:none;"></canvas>
   </div>
@@ -5041,10 +5141,10 @@ if(sb){
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
     <button class="btn secondary small" type="button" onclick="idCropAuto()">🔍 Auto-detect ID</button>
-    <button class="btn secondary small" type="button" onclick="idCropRotate()">⟳ Rotate</button>
-    <button class="btn secondary small" type="button" onclick="idCropReset()">Whole photo</button>
-    <button class="btn" type="button" onclick="idCropApply()">✔ Use cropped ID</button>
-    <button class="btn secondary small" type="button" onclick="idCropCancel()">Cancel</button>
+    <button id="idCropRotBtn" class="btn secondary small" type="button" onclick="idCropRotate()">⟳ Rotate</button>
+    <button id="idCropWholeBtn" class="btn secondary small" type="button" onclick="idCropReset()">Whole photo</button>
+    <button id="idCropApplyBtn" class="btn" type="button" onclick="idCropApply()">✔ Use cropped ID</button>
+    <button id="idCropCancelBtn" class="btn secondary small" type="button" onclick="idCropCancel()">Cancel</button>
   </div>
   <div id="idCropMsg" style="color:#ccc;font-size:13px;"></div>
 </div>
