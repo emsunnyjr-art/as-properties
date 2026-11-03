@@ -477,9 +477,9 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
         <div><label>Deposit amount</label><input id="cDeposit" type="number" step="0.01" value="0"></div>
         <div><label>Deposit date received (optional)</label><input id="cDepositDate" type="date" oninput="updateAdvDepHint()"></div>
         <input id="cDepositPeriods" type="hidden" value="0">
-        <div><label>Start date</label><input id="cStart" type="date" onchange="onEscalationChange(); updateAdvDepHint()"></div>
+        <div><label>Start date</label><input id="cStart" type="date" onchange="onEscalationChange(); updateAdvDepHint(); dueDayFromStart()"></div>
         <div><label id="cTermLabel">Term (months)</label><input id="cTerm" type="number" value="12" oninput="onEscalationChange()"></div>
-        <div id="cDueDayField"><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="31"><p class="muted" style="margin:0;">1 to 31. In shorter months it falls on the last day.</p></div>
+        <div id="cDueDayField"><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="31" oninput="dueDayTouched=true"><p class="muted" style="margin:0;">Follows the start date (started on the 20th = due every 20th). You can change it. In shorter months it falls on the last day.</p></div>
       </div>
       <p class="muted" id="advDepHint" style="margin:2px 0 8px 0;"></p>
 
@@ -3285,7 +3285,16 @@ async function startEditContract(id){
   document.querySelector('#tab-contracts').scrollIntoView({behavior:'smooth'});
 }
 
+let dueDayTouched = false;
+function dueDayFromStart(){
+  // a NEW contract's due day follows its start date, unless it was typed in by hand
+  if(typeof editingContractId !== 'undefined' && editingContractId) return;
+  if(dueDayTouched) return;
+  const v = document.getElementById('cStart').value; if(!v) return;
+  document.getElementById('cDueDay').value = parseInt(v.slice(8,10), 10) || 1;
+}
 function cancelEditContract(){
+  dueDayTouched = false;
   editingContractId = null;
   document.getElementById('contractFormTitle').textContent = 'New contract';
   document.getElementById('contractSubmitBtn').textContent = 'Create Contract';
