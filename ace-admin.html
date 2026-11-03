@@ -4846,7 +4846,7 @@ async function toggleBulkPayment(){
   body.classList.toggle('hidden');
   if(!opening) return;
   const t = manilaToday();
-  document.getElementById('bulkThrough').value = t.slice(0,7);
+  document.getElementById('bulkThrough').value = t.slice(0,7); document.getElementById('bulkThrough').max = t.slice(0,7);
   document.getElementById('bulkDate').value = t;
   document.getElementById('bulkDate').max = t;
   const [{ data: b }, { data: l }] = await Promise.all([ sb.from('buildings').select('id, name, location_id').order('name'), sb.from('locations').select('id, name').order('name') ]);
@@ -4869,6 +4869,7 @@ async function bulkPreview(){
   const ym = document.getElementById('bulkThrough').value;
   if(!ym){ list.innerHTML = '<p class="muted">Choose the month to pay up to.</p>'; return; }
   list.innerHTML = '<p class="muted">Loading…</p>';
+  if(ym > manilaToday().slice(0,7)){ document.getElementById('bulkThrough').value = manilaToday().slice(0,7); return bulkPreview(); }   // nothing past the current month
   const [y,m] = ym.split('-').map(Number);
   const endISO = `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
   const bld = document.getElementById('bulkBuilding').value, loc = document.getElementById('bulkLocation').value;
@@ -4880,12 +4881,12 @@ async function bulkPreview(){
     all = all.concat(data||[]);
     if(!data || data.length < 1000) break;
   }
-  // only contracts that are active, or cancelled but still being recovered
+  // only contracts that are active (occupied now)
   const cids = [...new Set(all.map(r=>r.contract_id))];
   const ok = new Set();
   for(let i=0;i<cids.length;i+=200){
     const { data: cs } = await sb.from('contracts').select('id,status,recover_dues').in('id', cids.slice(i,i+200));
-    (cs||[]).forEach(c=>{ if(c.status!=='cancelled' || c.recover_dues) ok.add(c.id); });
+    (cs||[]).forEach(c=>{ if(c.status==='active') ok.add(c.id); });   // only units that are occupied now
   }
   // Where each contract really is: from its linked units (not from the building NAME, which can repeat in other locations)
   const where = {};
@@ -5206,8 +5207,34 @@ if(sb){
 </div>
 
 <script>
+let lastHistOpts = null;
+async function histUndo(paymentId, amount){
+  const reason = prompt(`Undo this ${fmtMoney(amount)} payment? It will no longer count as paid (the original stays in the record).\nReason (required):`);
+  if(reason === null) return;
+  if(!reason.trim()) return alert('A reason is required.');
+  const { error } = await sb.rpc('reverse_payment', { p_payment_id: paymentId, p_reason: reason.trim(), p_date: manilaToday() });
+  if(error) return alert('Could not undo: ' + error.message);
+  openPaidHistory(lastHistOpts); try{ loadDashboard(); }catch(e){}
+}
+async function histEdit(paymentId, rentPaymentId){
+  const { data: p, error } = await sb.from('payments').select('*').eq('id', paymentId).single();
+  if(error || !p) return alert('Could not load that payment.');
+  const amt = prompt('Correct amount received (₱):', p.amount); if(amt === null) return;
+  const date = prompt('Date received (YYYY-MM-DD):', p.received_date); if(date === null) return;
+  const method = prompt('Paid through (cash, gcash, maya, bank, other):', p.method || 'cash'); if(method === null) return;
+  const ref = prompt('Reference (optional):', p.reference || ''); if(ref === null) return;
+  const a = Number(amt);
+  if(!(a > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !['cash','gcash','maya','bank','other'].includes(method.trim().toLowerCase()))
+    return alert('Please enter a valid amount, a date like 2026-10-05, and one of: cash, gcash, maya, bank, other.');
+  if(!confirm(`Replace this payment with ${fmtMoney(a)} received ${date} (${method.trim().toLowerCase()})?\nThe old entry stays in the record as undone.`)) return;
+  const r1 = await sb.rpc('reverse_payment', { p_payment_id: paymentId, p_reason: 'Corrected (edit)', p_date: manilaToday() });
+  if(r1.error) return alert('Could not change it: ' + r1.error.message);
+  const r2 = await sb.rpc('record_payment', { p_rent_payment_id: rentPaymentId, p_amount: a, p_received_date: date, p_method: method.trim().toLowerCase(), p_reference: ref.trim() || null, p_receipt_path: null, p_receipt_name: null, p_note: 'Corrected from an earlier entry' });
+  if(r2.error) alert('The old payment was undone, but the new one could not be saved: ' + r2.error.message + '\nPlease record it again from the Payments tab.');
+  openPaidHistory(lastHistOpts); try{ loadDashboard(); }catch(e){}
+}
 async function openPaidHistory(o){
-  o = o || {};
+  o = o || {}; lastHistOpts = o;
   showPreviewOverlay('Paid history');
   const frame = document.getElementById('previewFrame');
   frame.removeAttribute('src');
@@ -5236,7 +5263,7 @@ async function openPaidHistory(o){
       }
       const rids = rows.map(r=>r.id);
       for(let i=0;i<rids.length;i+=150){
-        const { data: pl } = await sb.from('payments').select('rent_payment_id, kind, amount, received_date, method, reference').in('rent_payment_id', rids.slice(i,i+150)).order('received_date');
+        const { data: pl } = await sb.from('payments').select('id, rent_payment_id, kind, amount, received_date, method, reference, reverses_payment_id, created_at').in('rent_payment_id', rids.slice(i,i+150)).order('created_at');
         (pl||[]).forEach(p=>{ (led[p.rent_payment_id] ||= []).push(p); });
       }
     }
@@ -5258,7 +5285,16 @@ async function openPaidHistory(o){
         <div class="sum">Billed ${money(due)} · Paid <b>${money(paid)}</b> · Balance <b style="color:${due-paid>0.004?'#c0392b':'#1a7f37'}">${money(Math.max(0,due-paid))}</b></div>
         <table><thead><tr><th>Period</th><th>Due</th><th class="n">Amount</th><th class="n">Paid</th><th>Status</th><th>Payments received</th></tr></thead><tbody>
         ${shown.map(r=>{ const pl = led[r.id]||[];
-          const pays = pl.map(p=>`${dt(p.received_date)} · ${esc(p.method||'')}${p.kind==='opening'?' (opening)':''}${p.kind==='reversal'?' (reversed)':''} · ${p.amount<0?'−':''}${money(Math.abs(p.amount))}${p.reference?' · '+esc(p.reference):''}`).join('<br>') || '<span class="m">—</span>';
+          const revd = new Set(pl.filter(x=>x.reverses_payment_id).map(x=>x.reverses_payment_id));
+          const live = pl.filter(x=>x.kind!=='reversal' && !revd.has(x.id));
+          const lastId = live.length ? live[live.length-1].id : null;
+          const pays = pl.map(p=>{
+            const isRev = p.kind==='reversal', was = revd.has(p.id);
+            const txt = `${dt(p.received_date)} · ${esc(p.method||'')}${p.kind==='opening'?' (carried over)':''} · ${p.amount<0?'−':''}${money(Math.abs(p.amount))}${p.reference?' · '+esc(p.reference):''}`;
+            if(isRev) return `<div class="rv">↩ Undone: ${txt}</div>`;
+            if(was) return `<div class="wr">${txt} <span class="m">(undone)</span></div>`;
+            return `<div class="pl${p.id===lastId?' last':''}">${txt} <span class="no-print"><button onclick="parent.histEdit('${p.id}','${r.id}')">✎ Edit</button> <button class="dn" onclick="parent.histUndo('${p.id}',${p.amount})">↩ Undo</button></span></div>`;
+          }).join('') || '<span class="m">—</span>';
           return `<tr><td>${mth(r.period_start)}</td><td>${dt(r.due_date)}</td><td class="n">${money(r.amount_due)}</td><td class="n">${money(r.amount_paid)}</td><td style="color:${stCol[r.status]||'#666'};font-weight:600">${esc(r.status)}</td><td>${pays}</td></tr>`; }).join('') || '<tr><td colspan="6" class="m">Nothing billed yet.</td></tr>'}
         </tbody></table>${hidden>0 ? `<div class="m">${hidden} later month${hidden===1?'':'s'} not yet due ${hidden===1?'is':'are'} not shown.</div>` : ''}`;
     });
@@ -5267,7 +5303,8 @@ async function openPaidHistory(o){
       body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#111;background:#fff;padding:18px;max-width:900px;margin:0 auto}
       h1{font-size:21px;margin:0 0 2px}h2{font-size:17px;margin:22px 0 2px;border-top:2px solid #333;padding-top:10px}.sub,.m{color:#666;font-size:13px}.sum{margin:6px 0 8px;font-size:14px}
       table{border-collapse:collapse;width:100%;font-size:13px}th,td{border-bottom:1px solid #ddd;padding:5px 6px;text-align:left;vertical-align:top}th{background:#f3f3f3}.n{text-align:right;white-space:nowrap}
-      @media print{body{padding:0}}</style>
+      .wr{text-decoration:line-through;color:#999}.rv{color:#c0392b}.pl{margin:2px 0}.pl.last{background:#fff8e1;border-radius:4px;padding:1px 3px}button{font-size:12px;padding:2px 7px;margin-left:3px;border:1px solid #999;border-radius:6px;background:#f5f5f5;cursor:pointer}button.dn{border-color:#c0392b;color:#c0392b}
+      @media print{body{padding:0}.no-print{display:none}}</style>
       <h1>Paid history — ${esc(title)}</h1><div class="sub">${esc(ren?.renter_code||'')} · as of ${dt(today)} · ${only?'this contract':'all contracts and units'}</div>
       ${contracts.length>1||!only ? `<div class="sum" style="margin-top:10px"><b>Total billed ${money(gDue)} · Total paid ${money(gPaid)} · Balance ${money(Math.max(0,gDue-gPaid))}</b></div>` : ''}
       ${body || '<p class="m">No contracts on file.</p>'}</body>`;
