@@ -1,6 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+// A password-recovery link that lands on this page is forwarded to the reset page, keeping its secret token.
+if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathname)){
+  location.replace(location.pathname.replace(/[^\/]*$/, '') + 'reset-password.html' + location.hash);
+}
+</script>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ace Properties Management</title>
