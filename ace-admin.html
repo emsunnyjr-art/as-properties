@@ -176,6 +176,12 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
     <div id="statListPanel"></div>
 
     <div class="homeCols">
+      <div class="card hidden" id="sigReqCard" style="border-color:var(--warn);">
+        <p class="section-title">Signature requests <span id="sigReqCount"></span></p>
+        <p class="muted" style="margin-top:-6px;">Review each document first. Approving lets that person print it with your signature for 24 hours.</p>
+        <div id="sigReqList"></div>
+        <div id="sigNotifyPanel"></div>
+      </div>
       <div class="card hidden" id="proofsCard" style="border-color:var(--warn);">
         <p class="section-title">Needs your approval <span id="proofsCount"></span></p>
         <p class="muted" style="margin-top:-6px;">Nothing is marked paid until you approve. Check your GCash or bank account first.</p>
@@ -260,6 +266,12 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
   <!-- ============ ALERTS ============ -->
   <section id="tab-alerts" class="hidden">
     <p class="section-title" style="font-size:18px;">Alerts</p>
+    <div class="card hidden" id="mySigCard">
+      <p class="section-title">My signature</p>
+      <p class="muted" style="margin-top:-6px;">Placed automatically on every contract and payment plan you print. Staff need your approval first. Only you can see or change it.</p>
+      <div id="mySigPreview" style="margin:10px 0;"></div>
+      <button class="btn big" onclick="openSigDraw()">Draw my signature</button>
+    </div>
         <div class="card">
           
           <p class="muted">Get a message on your own phone or email each time a renter sends proof of payment.</p>
@@ -1255,6 +1267,7 @@ async function loadBalanceSummary(){
 
 async function loadDashboard(){
   try{ loadProofs(); }catch(e){}
+  try{ loadOwnerArea(); }catch(e){}
   const { data: unitRows } = await sb.from('v_unit_status').select('*');
   // The view has one row per contract; count each unit once (occupied wins)
   const unitMap = new Map();
@@ -2660,6 +2673,8 @@ async function printPlan(planId){
     sigNote = `<div style="font-size:11px;color:#444;margin-top:4px;">Signed electronically by ${bulkEsc(p.signer_name||renterName)} on ${when}</div>`;
   }
   const items = its||[];
+  const gate = await lessorGate('plan', planId);
+  const gp = gateParts(gate, 'plan', planId, `Payment plan — ${renterName}`);
   const html = `<html><head><title>Payment Plan — ${bulkEsc(renterName)}</title>
     <style>
       body{font-family:Georgia,serif;max-width:760px;margin:40px auto;line-height:1.6;color:#111;font-size:14px;}
@@ -2672,7 +2687,10 @@ async function printPlan(planId){
       .sig div{width:45%;text-align:center;font-size:13px;}
       .sig .line{border-top:1px solid #333;padding-top:6px;margin-top:50px;}
       @media print{ .noprint{display:none;} }
-    </style></head><body>
+      ${gp.css}
+    </style></head><body class="${gp.bodyClass}">
+    ${gp.top}
+    <div class="doc">
     <h1>PAYMENT PLAN AGREEMENT</h1>
     <p>This Payment Plan Agreement is made ${when ? 'on <strong>'+when.split(' at ')[0]+'</strong>' : 'on ____________________'}, between <strong>${bulkEsc(LESSOR_NAME)}</strong>, the "Lessor", with a postal address at ${bulkEsc(LESSOR_ADDRESS)}; and <strong>${bulkEsc(renterName)}</strong>, the "Lessee", with a postal address at ${bulkEsc(p.renters?.address||'________________________')}, concerning the leased premises ${bulkEsc(unitNames)}.</p>
     <h3>Amount and schedule</h3>
@@ -2685,10 +2703,11 @@ async function printPlan(planId){
       return `<h3>${bulkEsc(lines[0])}</h3>${rest ? `<p>${bulkEsc(rest)}</p>` : ''}`; }).join('')}
     <p style="margin-top:30px;">IN WITNESS WHEREOF, the parties have signed this Agreement.</p>
     <div class="sig">
-      <div><div class="line">${bulkEsc(LESSOR_NAME)}<br>(Lessor)</div></div>
+      <div>${lessorSigBlock(gate)}<div class="line">${bulkEsc(LESSOR_NAME)}<br>(Lessor)</div></div>
       <div>${sigImg ? `<div style="height:50px;margin-bottom:-50px;display:flex;align-items:flex-end;justify-content:center;">${sigImg}</div>` : ''}<div class="line">${bulkEsc(renterName)}<br>(Lessee)${sigNote}</div></div>
     </div>
-    <p class="noprint" style="text-align:center;margin-top:30px;">This is a preview. <button onclick="window.print()">Print this plan</button></p>
+    </div>
+    ${gp.bottom}
     </body></html>`;
   document.getElementById('previewTitle').textContent = `Payment Plan — ${renterName}`;
   frame.srcdoc = html;
@@ -3531,6 +3550,150 @@ async function setRecoverDues(id, recover){
   loadContractsTable(); loadDashboard();
 }
 
+
+
+// ---------- owner area: signature drawing + staff requests ----------
+let ownerSigData = null;
+async function loadOwnerArea(){
+  const card = document.getElementById('sigReqCard'), sc = document.getElementById('mySigCard');
+  if(!card || !sc) return;
+  try{
+    const { data: info, error } = await sb.rpc('get_owner_info');
+    const me = info && info[0];
+    if(error || !me || !me.is_owner){ card.classList.add('hidden'); sc.classList.add('hidden'); return; }
+    ownerSigData = me.signature_data || null;
+    sc.classList.remove('hidden');
+    document.getElementById('mySigPreview').innerHTML = ownerSigData
+      ? `<div style="background:#fff;border-radius:8px;padding:8px;display:inline-block;"><img src="${ownerSigData}" style="max-height:80px;max-width:100%;display:block;"></div>`
+      : '<p class="muted" style="margin:0;">No signature saved yet. Draw it once and it is used from then on.</p>';
+    const { data: reqs } = await sb.from('signature_requests').select('*').eq('status','pending').order('requested_at');
+    const list = reqs || [];
+    card.classList.toggle('hidden', list.length === 0 && !document.getElementById('sigNotifyPanel').innerHTML);
+    document.getElementById('sigReqCount').textContent = list.length ? `(${list.length})` : '';
+    document.getElementById('sigReqList').innerHTML = (list.length ? '' : '<p class="muted">No requests waiting.</p>') + list.map(r=>`<div class="hcard">
+      <div class="top"><div class="nm">${bulkEsc(r.title||'Document')}</div></div>
+      <div class="sub">Asked by ${bulkEsc(r.requested_by_email)} · ${new Date(r.requested_at).toLocaleString('en-PH',{timeZone:'Asia/Manila', month:'short', day:'numeric', hour:'numeric', minute:'2-digit'})}${r.request_note ? ' · “'+bulkEsc(r.request_note)+'”' : ''}</div>
+      <div class="acts"><button class="btn secondary big" onclick="reviewSigDoc('${r.doc_kind}','${r.doc_id}')">Review</button><button class="btn big" onclick="decideSig('${r.id}', true)">Approve</button></div>
+      <button class="btn secondary big" style="width:100%;margin-top:10px;" onclick="decideSig('${r.id}', false)">Reject</button></div>`).join('');
+  }catch(e){ console.error('owner area', e); }
+}
+function reviewSigDoc(kind, id){ if(kind === 'plan') printPlan(id); else printContract(id); }
+async function decideSig(requestId, approve){
+  const { data: r } = await sb.from('signature_requests').select('*').eq('id', requestId).single();
+  if(!r) return alert('This request is no longer there. Refresh.');
+  let note = '';
+  if(approve){
+    if(!ownerSigData) return alert('Draw your signature first (Alerts tab), then approve.');
+    if(!confirm(`Approve "${r.title||'this document'}"?\n\nYou are confirming you reviewed it. ${r.requested_by_email} can print it with your signature for 24 hours. If it is edited, the approval stops.`)) return;
+  } else {
+    note = prompt('Why not? (the staff member will see this)') ;
+    if(note === null) return;
+  }
+  const { error } = await sb.rpc('decide_signature_request', { p_request:requestId, p_approve:approve, p_note:note });
+  if(error) return alert('Could not save: ' + error.message);
+  const msg = approve
+    ? `Your request to print "${r.title||'the document'}" with the owner's signature is APPROVED for the next 24 hours. Open it in the app, tick the review box, then print.`
+    : `Your request to print "${r.title||'the document'}" with the owner's signature was NOT approved${note ? ': ' + note : '.'}`;
+  const subject = approve ? 'Approved: print with owner signature' : 'Not approved: print with owner signature';
+  const emailStatus = await trySendEmail(r.requested_by_email, subject, msg);
+  document.getElementById('sigReqCard').classList.remove('hidden');
+  showNotifyPanel(r.requested_by_email, r.requested_by_email, null, msg, 'sigNotifyPanel', subject, emailStatus);
+  loadOwnerArea();
+}
+function openSigDraw(){
+  let ov = document.getElementById('sigDrawOverlay');
+  if(!ov){ ov = document.createElement('div'); ov.id = 'sigDrawOverlay'; document.body.appendChild(ov); }
+  ov.style.cssText = 'position:fixed;inset:0;background:var(--bg);z-index:1060;overflow:auto;padding:14px;';
+  ov.innerHTML = `<div style="max-width:640px;margin:0 auto;"><div class="card">
+    <p class="section-title" style="margin-top:0;">Draw your signature</p>
+    <p class="muted">Sign inside the box with your finger or mouse. You can clear it and try again.</p>
+    <canvas id="sigDrawPad" style="width:100%;height:200px;background:#fff;border-radius:8px;touch-action:none;display:block;"></canvas>
+    <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
+      <button class="btn big" onclick="saveSigDraw()">Save signature</button>
+      <button class="btn secondary big" onclick="clearSigDraw()">Clear</button>
+      <button class="btn secondary big" onclick="closeSigDraw()">Cancel</button>
+    </div></div></div>`;
+  const c = document.getElementById('sigDrawPad'), ratio = window.devicePixelRatio || 1;
+  c.width = c.clientWidth * ratio; c.height = c.clientHeight * ratio;
+  const g = c.getContext('2d'); g.scale(ratio, ratio); g.lineWidth = 2.4; g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = '#111';
+  let down = false; c._drawn = false;
+  const pos = e => { const r = c.getBoundingClientRect(); return { x:e.clientX - r.left, y:e.clientY - r.top }; };
+  c.addEventListener('pointerdown', e=>{ down = true; c._drawn = true; c.setPointerCapture(e.pointerId); const p = pos(e); g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(p.x+0.01, p.y); g.stroke(); e.preventDefault(); });
+  c.addEventListener('pointermove', e=>{ if(!down) return; const p = pos(e); g.lineTo(p.x, p.y); g.stroke(); e.preventDefault(); });
+  const up = ()=>{ down = false; };
+  c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up);
+}
+function clearSigDraw(){ const c = document.getElementById('sigDrawPad'); c.getContext('2d').clearRect(0, 0, c.width, c.height); c._drawn = false; }
+function closeSigDraw(){ const ov = document.getElementById('sigDrawOverlay'); if(ov) ov.remove(); }
+async function saveSigDraw(){
+  const c = document.getElementById('sigDrawPad');
+  if(!c._drawn) return alert('Draw your signature in the box first.');
+  // crop to the ink so it prints at a good size
+  const g = c.getContext('2d'), w = c.width, h = c.height, d = g.getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = 0, y1 = 0;
+  for(let y=0; y<h; y++) for(let x=0; x<w; x++) if(d[(y*w + x)*4 + 3] > 10){ if(x<x0) x0=x; if(x>x1) x1=x; if(y<y0) y0=y; if(y>y1) y1=y; }
+  if(x1 <= x0 || y1 <= y0) return alert('Draw your signature in the box first.');
+  const pad = 6; x0 = Math.max(0, x0-pad); y0 = Math.max(0, y0-pad); x1 = Math.min(w, x1+pad); y1 = Math.min(h, y1+pad);
+  const out = document.createElement('canvas'); out.width = x1-x0; out.height = y1-y0;
+  out.getContext('2d').drawImage(c, x0, y0, x1-x0, y1-y0, 0, 0, x1-x0, y1-y0);
+  const { error } = await sb.rpc('set_lessor_signature', { p_data: out.toDataURL('image/png') });
+  if(error) return alert('Could not save the signature: ' + error.message);
+  closeSigDraw(); alert('Signature saved. It now appears on your contract previews.'); loadOwnerArea();
+}
+
+// ---------- OWNER SIGNATURE: stored privately, staff need the owner's approval ----------
+async function lessorGate(kind, id){
+  try{
+    const { data, error } = await sb.rpc('signature_approval_status', { p_kind:kind, p_id:id });
+    if(error) return { status:'unavailable', canPrint:true, sig:null };
+    const st = (data && data[0]) || {};
+    let sig = null;
+    if(st.status === 'owner' || st.status === 'approved'){
+      const r = await sb.rpc('get_lessor_signature', { p_kind:kind, p_id:id });
+      sig = r.data || null;
+    }
+    return { ...st, sig, canPrint: st.status === 'owner' || st.status === 'approved' };
+  }catch(e){ return { status:'unavailable', canPrint:true, sig:null }; }
+}
+function lessorSigBlock(gate){
+  return gate && gate.sig ? `<div style="height:50px;margin-bottom:-50px;display:flex;align-items:flex-end;justify-content:center;"><img src="${gate.sig}" style="max-height:48px;max-width:100%;display:block;"></div>` : '';
+}
+// the review reminder, the approval notice and the print lock that go inside a preview
+function gateParts(gate, kind, id, title){
+  const box = (bg, bd, inner) => `<div class="noprint" style="background:${bg};border:2px solid ${bd};padding:12px 14px;margin-bottom:16px;border-radius:8px;font-family:sans-serif;font-size:14px;line-height:1.45;color:#222;">${inner}</div>`;
+  const css = `@media print{ body.unreviewed .doc, body.locked .doc{display:none;} body.unreviewed:before{content:"Not printed: the review box was not ticked.";display:block;font:20px sans-serif;padding:40px;} body.locked:before{content:"Not printed: waiting for the owner's approval.";display:block;font:20px sans-serif;padding:40px;} }`;
+  if(gate.canPrint){
+    const who = gate.status === 'owner' ? 'This copy carries your signature.'
+      : gate.status === 'approved' ? `This copy carries the owner's signature (approved until ${new Date(gate.expires_at).toLocaleString('en-PH',{timeZone:'Asia/Manila', month:'short', day:'numeric', hour:'numeric', minute:'2-digit'})}).` : '';
+    const noSig = (gate.status === 'owner' && !gate.sig) ? ' <strong>You have not saved your signature yet. Draw it under Alerts.</strong>' : '';
+    return { css, bodyClass:'unreviewed',
+      top: box('#fff7e0', '#e0a800', `<strong>Review before printing.</strong> Check the names, units, amounts, dates and terms. ${who}${noSig}
+        <label style="display:block;margin-top:8px;font-size:14px;color:#222;"><input type="checkbox" id="rvChk" onchange="document.body.classList.toggle('unreviewed', !this.checked); document.getElementById('rvBtn').disabled = !this.checked;"> I have reviewed this document and confirm it is ready to print.</label>`),
+      bottom: `<p class="noprint" style="text-align:center;margin-top:30px;"><button id="rvBtn" disabled onclick="window.print()">Print</button></p>` };
+  }
+  const msg = {
+    none: `The owner's signature is not on this copy. To print it with the owner's signature, ask the owner to approve.`,
+    pending: `Your request is waiting for the owner's approval. Check again after the owner answers.`,
+    rejected: `The owner did not approve this${gate.decision_note ? ': <em>' + bulkEsc(gate.decision_note) + '</em>' : '.'} You can ask again after fixing it.`,
+    expired: `The approval ran out (it lasts 24 hours). Ask again to print.`,
+    changed: `This document was edited after the owner approved it, so the approval no longer applies. Ask again.`
+  }[gate.status] || '';
+  const noSigYet = gate.has_signature === false ? ' The owner has not saved a signature yet.' : '';
+  const canAsk = gate.status !== 'pending';
+  return { css, bodyClass:'locked',
+    top: box('#fdecec', '#d33', `<strong>Printing needs the owner's approval.</strong> ${msg}${noSigYet}
+      ${canAsk ? `<div style="margin-top:8px;"><button onclick="parent.requestSignature('${kind}','${id}',${bulkEsc(JSON.stringify(title)).replace(/&quot;/g,'&quot;')})">Ask the owner to approve</button></div>` : ''}`),
+    bottom: '' };
+}
+async function requestSignature(kind, id, title){
+  const note = prompt('Anything the owner should know? (optional)');
+  if(note === null) return;
+  const { error } = await sb.rpc('request_signature_approval', { p_kind:kind, p_id:id, p_title:title, p_note:note||'' });
+  if(error) return alert('Could not send the request: ' + error.message);
+  alert('Request sent. The owner sees it on the Home screen and will approve it. Open the preview again after that.');
+  if(kind === 'plan') printPlan(id); else printContract(id);
+}
+
 async function printContract(id){
   showPreviewOverlay('Loading contract…');
   document.getElementById('previewFrame').srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
@@ -3597,6 +3760,8 @@ async function printContract(id){
 
   const totalInitial = (Number(c.advance)||0) + (Number(c.deposit)||0);
 
+  const gate = await lessorGate('contract', id);
+  const gp = gateParts(gate, 'contract', id, `Lease — ${unitsDesc} — ${renterName}`);
   const contractHtml = `
     <html><head><title>Lease Agreement — ${unitsDesc}</title>
     <style>
@@ -3611,7 +3776,10 @@ async function printContract(id){
       .ack-page{page-break-before:always;margin-top:40px;}
       .ack-line{margin:22px 0 4px 0;border-bottom:1px solid #333;width:60%;}
       @media print{ .noprint{display:none;} }
-    </style></head><body>
+      ${gp.css}
+    </style></head><body class="${gp.bodyClass}">
+    ${gp.top}
+    <div class="doc">
 
     <h1>LEASE AGREEMENT</h1>
 
@@ -3652,7 +3820,7 @@ async function printContract(id){
     <p style="margin-top:30px;">IN WITNESS WHEREOF, the parties have executed this Agreement as of the date first above written.</p>
 
     <div class="sig">
-      <div><div class="line">${LESSOR_NAME}<br>(Lessor)</div></div>
+      <div>${lessorSigBlock(gate)}<div class="line">${LESSOR_NAME}<br>(Lessor)</div></div>
       <div>${sigImg ? `<div style="height:50px;margin-bottom:-50px;display:flex;align-items:flex-end;justify-content:center;">${sigImg}</div>` : ''}<div class="line">${bulkEsc(renterName)}<br>(Lessee)${sigNote}</div></div>
     </div>
 
@@ -3669,7 +3837,8 @@ async function printContract(id){
       Series of 20____.</p>
     </div>
 
-    <p class="noprint" style="text-align:center;margin-top:30px;">This is a preview. <button onclick="window.print()">🖨️ Print this contract</button></p>
+    </div>
+    ${gp.bottom}
     </body></html>
   `;
 
@@ -4769,7 +4938,12 @@ function closePreviewOverlay(){
 }
 function printPreviewFrame(){
   const frame = document.getElementById('previewFrame');
-  try{ frame.contentWindow.focus(); frame.contentWindow.print(); }
+  try{
+    const bc = frame.contentDocument && frame.contentDocument.body ? frame.contentDocument.body.classList : null;
+    if(bc && bc.contains('locked')){ alert('This cannot be printed yet: it needs the owner\u2019s approval.'); return; }
+    if(bc && bc.contains('unreviewed')){ alert('Tick \u201cI have reviewed this document\u201d at the top first.'); return; }
+    frame.contentWindow.focus(); frame.contentWindow.print();
+  }
   catch(e){ alert('Could not open the print dialog for this preview.'); }
 }
 </script>
