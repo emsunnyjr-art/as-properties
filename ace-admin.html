@@ -391,10 +391,12 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
         <div><label>Email (optional)</label><input id="rEmail"></div>
         <div><label>Address</label><input id="rAddress"></div>
       </div>
-      <div><label>Upload renter ID (photo or scan)</label>
-        <input id="rIdFile" type="file" accept=".pdf,image/*" onchange="onIdFileSelected()">
-        <p class="muted" style="margin:2px 0;">Photo or scan of the ID: the app finds the ID card, trims the unwanted edges, and keeps only the ID. You can adjust the crop before saving.</p>
-        <div id="rIdPreview" class="hidden" style="margin:6px 0;"></div>
+      <div><label>Renter ID</label>
+        <div id="rIdBox" onclick="idBoxTap()" style="width:100%;max-width:380px;aspect-ratio:1.586/1;border:2px dashed var(--border,#555);border-radius:10px;display:flex;align-items:center;justify-content:center;text-align:center;cursor:pointer;overflow:hidden;background:rgba(127,127,127,.08);"></div>
+        <input id="rIdFile" type="file" accept=".pdf,image/*" onchange="onIdFileSelected()" style="display:none;">
+        <input id="rIdCam" type="file" accept="image/*" capture="environment" onchange="onIdCamSelected()" style="display:none;">
+        <div id="rIdBtns" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;"></div>
+        <p class="muted" style="margin:2px 0;">The app finds the ID card and trims the background so only the full ID is saved. You can zoom and adjust the crop before saving.</p>
         <p class="muted" id="rIdFileCurrent" style="margin:2px 0 8px 0;"></p>
       </div>
       <button class="btn big" id="renterSubmitBtn" onclick="saveRenter()">Save renter</button>
@@ -2064,7 +2066,7 @@ async function loadUnitsTable(){
 // ---------- ID PHOTO: find the card, trim the edges, keep only the ID ----------
 let rIdCropped = null;      // { blob, name } ready to upload with the renter
 let rIdOriginalFile = null; // the photo as picked (so it can be re-cropped)
-const idCrop = { src:null, rect:null, scale:1, drag:null };
+const idCrop = { src:null, rect:null, scale:1, fit:1, zoom:1, drag:null, ptrs:{} };
 const ID_MAX_SRC = 2000, ID_MAX_OUT = 1600;
 
 function onIdFileSelected(){
@@ -2086,7 +2088,8 @@ function openIdCropper(file){
     const c = document.createElement('canvas');
     c.width = Math.round(img.naturalWidth*k); c.height = Math.round(img.naturalHeight*k);
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-    idCrop.src = c;
+    idCrop.src = c; idCrop.zoom = 1;
+    document.getElementById('idCropZoom').value = 1; document.getElementById('idCropZoomLbl').textContent = '100%';
     document.getElementById('idCropOverlay').classList.remove('hidden');
     layoutIdCropCanvas();
     idCropAuto();
@@ -2097,8 +2100,10 @@ function openIdCropper(file){
 
 function layoutIdCropCanvas(){
   const cv = document.getElementById('idCropCanvas');
-  const maxW = Math.min(window.innerWidth - 24, 1100), maxH = window.innerHeight - 190;
-  idCrop.scale = Math.min(maxW/idCrop.src.width, maxH/idCrop.src.height, 1);
+  const wrap = document.getElementById('idCropWrap');
+  const maxW = Math.max(120, Math.min(window.innerWidth - 24, 1100)), maxH = Math.max(120, window.innerHeight - 250);
+  idCrop.fit = Math.min(maxW/idCrop.src.width, maxH/idCrop.src.height, 1);
+  idCrop.scale = idCrop.fit * (idCrop.zoom || 1);
   cv.width = Math.round(idCrop.src.width*idCrop.scale);
   cv.height = Math.round(idCrop.src.height*idCrop.scale);
   bindIdCropEvents();
@@ -2127,18 +2132,32 @@ function bindIdCropEvents(){
   if(idCropBound) return; idCropBound = true;
   const cv = document.getElementById('idCropCanvas');
   const pos = e=>{ const b = cv.getBoundingClientRect(); return { x:(e.clientX-b.left)*(cv.width/b.width)/idCrop.scale, y:(e.clientY-b.top)*(cv.height/b.height)/idCrop.scale }; };
+  const wrap = document.getElementById('idCropWrap');
+  cv.addEventListener('wheel', e=>{ e.preventDefault(); idCropZoomBy(e.deltaY<0?1.15:1/1.15, e.clientX, e.clientY); }, { passive:false });
   cv.addEventListener('pointerdown', e=>{
     if(!idCrop.rect) return;
     cv.setPointerCapture(e.pointerId);
+    idCrop.ptrs[e.pointerId] = { x:e.clientX, y:e.clientY };
+    if(Object.keys(idCrop.ptrs).length === 2){   // two fingers = pinch to zoom
+      const a = Object.values(idCrop.ptrs); idCrop.drag = { mode:'pinch', d0:Math.hypot(a[0].x-a[1].x, a[0].y-a[1].y), z0:idCrop.zoom };
+      return;
+    }
     const p = pos(e), r = idCrop.rect, grab = 26/idCrop.scale;
     const corners = { nw:[r.x,r.y], ne:[r.x+r.w,r.y], sw:[r.x,r.y+r.h], se:[r.x+r.w,r.y+r.h] };
     let mode = null;
     for(const k in corners){ if(Math.hypot(p.x-corners[k][0], p.y-corners[k][1]) < grab){ mode = k; break; } }
     if(!mode && p.x>r.x && p.x<r.x+r.w && p.y>r.y && p.y<r.y+r.h) mode = 'move';
-    idCrop.drag = mode ? { mode, start:p, orig:{...r} } : null;
+    idCrop.drag = mode ? { mode, start:p, orig:{...r} } : { mode:'pan', x:e.clientX, y:e.clientY, sl:wrap.scrollLeft, st:wrap.scrollTop };
   });
   cv.addEventListener('pointermove', e=>{
+    if(idCrop.ptrs[e.pointerId]) idCrop.ptrs[e.pointerId] = { x:e.clientX, y:e.clientY };
     const d = idCrop.drag; if(!d) return;
+    if(d.mode==='pinch'){
+      const a = Object.values(idCrop.ptrs); if(a.length<2) return;
+      const dist = Math.hypot(a[0].x-a[1].x, a[0].y-a[1].y);
+      setIdZoom(d.z0 * dist / (d.d0||1), (a[0].x+a[1].x)/2, (a[0].y+a[1].y)/2); return;
+    }
+    if(d.mode==='pan'){ wrap.scrollLeft = d.sl - (e.clientX-d.x); wrap.scrollTop = d.st - (e.clientY-d.y); return; }
     const p = pos(e), dx = p.x-d.start.x, dy = p.y-d.start.y, o = d.orig, W = idCrop.src.width, H = idCrop.src.height, min = 40;
     let x1 = o.x, y1 = o.y, x2 = o.x+o.w, y2 = o.y+o.h;
     if(d.mode==='move'){
@@ -2153,7 +2172,7 @@ function bindIdCropEvents(){
     idCrop.rect = { x:x1, y:y1, w:x2-x1, h:y2-y1 };
     drawIdCrop();
   });
-  const end = ()=>{ idCrop.drag = null; };
+  const end = e=>{ delete idCrop.ptrs[e.pointerId]; idCrop.drag = null; };
   cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
 }
 
@@ -2197,12 +2216,27 @@ function idCropAuto(){
   document.getElementById('idCropMsg').textContent = msg;
   drawIdCrop();
 }
+function setIdZoom(z, cx, cy){
+  z = Math.max(1, Math.min(5, z)); if(!idCrop.src) return;
+  const wrap = document.getElementById('idCropWrap'), cv = document.getElementById('idCropCanvas');
+  const wb = wrap.getBoundingClientRect(), cb = cv.getBoundingClientRect();
+  // keep the point under the fingers/cursor (default: centre of the view) in place
+  const px = (cx==null ? wb.left+wb.width/2 : cx) - cb.left, py = (cy==null ? wb.top+wb.height/2 : cy) - cb.top;
+  const fx = px / cb.width, fy = py / cb.height;
+  idCrop.zoom = z; layoutIdCropCanvas();
+  const nb = cv.getBoundingClientRect();
+  wrap.scrollLeft += (nb.left + fx*nb.width) - (cx==null ? wb.left+wb.width/2 : cx);
+  wrap.scrollTop  += (nb.top  + fy*nb.height) - (cy==null ? wb.top+wb.height/2 : cy);
+  document.getElementById('idCropZoom').value = z;
+  document.getElementById('idCropZoomLbl').textContent = Math.round(z*100) + '%';
+}
+function idCropZoomBy(f, cx, cy){ setIdZoom((idCrop.zoom||1)*f, cx, cy); }
 function idCropReset(){ idCrop.rect = { x:0, y:0, w:idCrop.src.width, h:idCrop.src.height }; document.getElementById('idCropMsg').textContent = ''; drawIdCrop(); }
 function idCropRotate(){
   const s = idCrop.src, c = document.createElement('canvas');
   c.width = s.height; c.height = s.width;
   const ctx = c.getContext('2d'); ctx.translate(c.width/2, c.height/2); ctx.rotate(Math.PI/2); ctx.drawImage(s, -s.width/2, -s.height/2);
-  idCrop.src = c; layoutIdCropCanvas(); idCropAuto();
+  idCrop.src = c; idCrop.zoom = 1; document.getElementById('idCropZoom').value = 1; document.getElementById('idCropZoomLbl').textContent = '100%'; layoutIdCropCanvas(); idCropAuto();
 }
 function idCropCancel(){
   document.getElementById('idCropOverlay').classList.add('hidden');
@@ -2222,14 +2256,103 @@ function idCropApply(){
     renderIdPreview();
   }, 'image/jpeg', 0.9);
 }
-function renderIdPreview(){
-  const box = document.getElementById('rIdPreview');
-  if(!rIdCropped){ box.classList.add('hidden'); box.innerHTML = ''; return; }
-  const url = URL.createObjectURL(rIdCropped.blob);
-  box.innerHTML = `<img src="${url}" style="max-width:320px;max-height:200px;border:1px solid var(--line,#444);border-radius:8px;display:block;margin-bottom:4px;">
-    <span class="muted">Cropped ID ready — it is saved when you tap Add/Update Renter.</span>
-    <button type="button" class="btn secondary small" onclick="if(rIdOriginalFile) openIdCropper(rIdOriginalFile)">Re-crop</button>`;
-  box.classList.remove('hidden');
+let rIdSaved = null;   // { path, url } of the ID already on file for the renter being edited
+let rIdBlobUrl = null;
+function renderIdPreview(){ renderIdBox(); }
+function renderIdBox(){
+  const box = document.getElementById('rIdBox'), btns = document.getElementById('rIdBtns');
+  if(!box) return;
+  if(rIdBlobUrl){ URL.revokeObjectURL(rIdBlobUrl); rIdBlobUrl = null; }
+  const pdf = document.getElementById('rIdFile').files[0];
+  let note = '', zoomUrl = null;
+  box.style.borderStyle = 'solid';
+  if(rIdCropped){
+    rIdBlobUrl = URL.createObjectURL(rIdCropped.blob); zoomUrl = rIdBlobUrl;
+    box.innerHTML = `<img src="${zoomUrl}" alt="ID" style="width:100%;height:100%;object-fit:contain;background:#000;">`;
+    note = 'Cropped ID ready — it is saved when you tap Save.';
+  } else if(pdf && !pdf.type.startsWith('image/')){
+    box.innerHTML = `<div style="padding:10px;">📄 ${String(pdf.name).replace(/</g,'&lt;')}<br><span class="muted">PDF — saved as is</span></div>`;
+  } else if(rIdSaved && rIdSaved.url){
+    zoomUrl = rIdSaved.url;
+    box.innerHTML = `<img src="${zoomUrl}" alt="ID" style="width:100%;height:100%;object-fit:contain;background:#000;">`;
+    note = 'ID on file. Tap it to zoom, or add a new photo to replace it.';
+  } else if(rIdSaved && rIdSaved.path){
+    box.innerHTML = `<div style="padding:10px;">🪪 ID on file<br><span class="muted">tap to open</span></div>`;
+  } else {
+    box.style.borderStyle = 'dashed';
+    box.innerHTML = `<div style="padding:10px;"><div style="font-size:34px;">🪪</div><strong>Tap to add the ID</strong><br><span class="muted">photo or scan</span></div>`;
+  }
+  box._zoomUrl = zoomUrl;
+  btns.innerHTML = `<button type="button" class="btn secondary small" onclick="document.getElementById('rIdFile').click()">📁 Choose file</button>
+    <button type="button" class="btn secondary small" onclick="document.getElementById('rIdCam').click()">📷 Take photo</button>`
+    + (zoomUrl ? ` <button type="button" class="btn secondary small" onclick="openIdZoom(document.getElementById('rIdBox')._zoomUrl,'Renter ID')">🔍 Zoom</button>` : '')
+    + (rIdOriginalFile ? ` <button type="button" class="btn secondary small" onclick="openIdCropper(rIdOriginalFile)">✂ Re-crop</button>` : '')
+    + (note ? ` <span class="muted" style="align-self:center;">${note}</span>` : '');
+}
+function idBoxTap(){
+  const box = document.getElementById('rIdBox');
+  if(box._zoomUrl) openIdZoom(box._zoomUrl, 'Renter ID');
+  else if(rIdSaved && rIdSaved.path) viewStoredFile(rIdSaved.path, 'Renter ID');
+  else document.getElementById('rIdFile').click();
+}
+function onIdCamSelected(){
+  const cam = document.getElementById('rIdCam'), f = cam.files[0]; if(!f) return;
+  try{ const dt = new DataTransfer(); dt.items.add(f); document.getElementById('rIdFile').files = dt.files; }catch(e){}
+  cam.value = '';
+  onIdFileSelected();
+}
+async function loadSavedIdForBox(path){
+  rIdSaved = path ? { path, url:null } : null; renderIdBox();
+  if(path && /\.(jpe?g|png|webp|gif)$/i.test(path)){
+    const { data } = await sb.storage.from('contract-files').createSignedUrl(path, 3600);
+    if(data && rIdSaved && rIdSaved.path === path){ rIdSaved.url = data.signedUrl; renderIdBox(); }
+  }
+}
+
+// ---- full-screen zoom viewer for ID images (buttons, wheel, drag, pinch) ----
+const idz = { s:1, x:0, y:0, fit:1, w:0, h:0, ptrs:{}, drag:null, bound:false };
+function openIdZoom(url, title){
+  if(!url) return;
+  document.getElementById('idZoomTitle').textContent = title || 'ID';
+  const img = document.getElementById('idZoomImg');
+  document.getElementById('idZoomOverlay').classList.remove('hidden');
+  img.onload = ()=>{ idz.w = img.naturalWidth; idz.h = img.naturalHeight; idZoomReset(); };
+  img.src = url;
+  if(!idz.bound) bindIdZoom();
+}
+function closeIdZoom(){ document.getElementById('idZoomOverlay').classList.add('hidden'); }
+function idZoomApply(){ document.getElementById('idZoomImg').style.transform = `translate(${idz.x}px,${idz.y}px) scale(${idz.s})`; }
+function idZoomReset(){
+  const st = document.getElementById('idZoomStage'), W = st.clientWidth, H = st.clientHeight;
+  idz.fit = Math.min(W/idz.w, H/idz.h); idz.s = idz.fit;
+  idz.x = (W - idz.w*idz.s)/2; idz.y = (H - idz.h*idz.s)/2; idZoomApply();
+}
+function idZoomAt(f, cx, cy){
+  const st = document.getElementById('idZoomStage'), b = st.getBoundingClientRect();
+  if(cx==null){ cx = b.left+b.width/2; cy = b.top+b.height/2; }
+  const px = cx-b.left, py = cy-b.top, ns = Math.max(idz.fit*0.5, Math.min(idz.fit*8, idz.s*f)), k = ns/idz.s;
+  idz.x = px - (px-idz.x)*k; idz.y = py - (py-idz.y)*k; idz.s = ns; idZoomApply();
+}
+function idZoomBy(f){ idZoomAt(f); }
+function bindIdZoom(){
+  idz.bound = true;
+  const st = document.getElementById('idZoomStage');
+  st.addEventListener('wheel', e=>{ e.preventDefault(); idZoomAt(e.deltaY<0?1.2:1/1.2, e.clientX, e.clientY); }, { passive:false });
+  st.addEventListener('dblclick', e=>{ idz.s > idz.fit*1.05 ? idZoomReset() : idZoomAt(2.5, e.clientX, e.clientY); });
+  st.addEventListener('pointerdown', e=>{
+    st.setPointerCapture(e.pointerId); idz.ptrs[e.pointerId] = { x:e.clientX, y:e.clientY };
+    const a = Object.values(idz.ptrs);
+    idz.drag = a.length===2 ? { pinch:true, d0:Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y), s0:idz.s } : { sx:e.clientX, sy:e.clientY, x0:idz.x, y0:idz.y };
+  });
+  st.addEventListener('pointermove', e=>{
+    if(idz.ptrs[e.pointerId]) idz.ptrs[e.pointerId] = { x:e.clientX, y:e.clientY };
+    const d = idz.drag; if(!d) return;
+    if(d.pinch){ const a = Object.values(idz.ptrs); if(a.length<2) return;
+      const dist = Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y); idZoomAt((d.s0*dist/(d.d0||1))/idz.s, (a[0].x+a[1].x)/2, (a[0].y+a[1].y)/2); return; }
+    idz.x = d.x0 + e.clientX-d.sx; idz.y = d.y0 + e.clientY-d.sy; idZoomApply();
+  });
+  const end = e=>{ delete idz.ptrs[e.pointerId]; idz.drag = null; };
+  st.addEventListener('pointerup', end); st.addEventListener('pointercancel', end);
 }
 async function uploadIdBlob(renterId){
   if(!rIdCropped) return false;
@@ -2278,6 +2401,7 @@ async function startEditRenter(id){
   document.getElementById('rIdFile').value = '';
   rIdCropped = null; rIdOriginalFile = null; renderIdPreview();
   showCurrentFile('rIdFileCurrent', r.id_file_path, r.id_file_name, 'Renter ID', 'No ID uploaded yet.');
+  loadSavedIdForBox(r.id_file_path);
   document.getElementById('renterFormTitle').textContent = 'Editing renter';
   document.getElementById('renterSubmitBtn').textContent = 'Save changes';
   clearRenterDetail();
@@ -2286,6 +2410,7 @@ async function startEditRenter(id){
 }
 
 function openRenterForm(){
+  if(!editingRenterId){ rIdSaved = null; renderIdBox(); }
   document.getElementById('renterFormCard').classList.remove('hidden');
   document.getElementById('rName').focus();
   document.getElementById('renterFormCard').scrollIntoView({behavior:'smooth', block:'start'});
@@ -2297,6 +2422,7 @@ function cancelEditRenter(){
   document.getElementById('rIdFile').value = '';
   rIdCropped = null; rIdOriginalFile = null; renderIdPreview();
   document.getElementById('rIdFileCurrent').textContent = '';
+  rIdSaved = null; renderIdBox();
   document.getElementById('renterFormTitle').textContent = 'Add renter';
   document.getElementById('renterSubmitBtn').textContent = 'Save renter';
 }
@@ -2416,7 +2542,7 @@ async function showRenterDetailInner(renterId, fromPop){
     const { data: su } = await sb.storage.from('contract-files').createSignedUrl(r.id_file_path, 3600);
     const box = document.getElementById('renterDetailId');
     if(su && box){
-      box.innerHTML = `<img src="${su.signedUrl}" alt="ID" style="max-width:300px;max-height:190px;border-radius:8px;border:1px solid var(--line,#444);cursor:pointer;" onclick="viewStoredFile('${r.id_file_path.replace(/'/g,"\\'")}','${(r.name||'').replace(/'/g,"\\'")} — ID')">`;
+      box.innerHTML = `<img src="${su.signedUrl}" alt="ID" style="max-width:300px;max-height:190px;border-radius:8px;border:1px solid var(--line,#444);cursor:pointer;" onclick="openIdZoom(this.src,'${(r.name||'').replace(/'/g,"\\'")} — ID')" title="Tap to zoom">`;
     }
   } else if(r.id_file_path){
     document.getElementById('renterDetailId').innerHTML = `<button class="btn secondary small" onclick="viewStoredFile('${r.id_file_path.replace(/'/g,"\\'")}','ID')">🪪 View ID</button>`;
@@ -4901,9 +5027,18 @@ if(sb){
 }
 </script>
 
-<div id="idCropOverlay" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:1100;display:flex;flex-direction:column;align-items:center;padding:12px;gap:10px;">
-  <div style="color:#fff;font-weight:700;">Crop the ID — drag the corners (or the box) so only the ID is inside</div>
-  <canvas id="idCropCanvas" style="touch-action:none;max-width:100%;border-radius:6px;background:#000;"></canvas>
+<div id="idCropOverlay" class="hidden" style="position:fixed;inset:0;background:#05070a;z-index:1100;display:flex;flex-direction:column;align-items:center;padding:12px;gap:8px;">
+  <div style="color:#fff;font-weight:700;text-align:center;">Crop the ID — drag the corners (or the box) so only the ID is inside. Zoom to place them exactly; drag outside the box to move around.</div>
+  <div id="idCropWrap" style="flex:1;min-height:0;width:100%;overflow:auto;display:flex;border-radius:6px;background:#000;">
+    <canvas id="idCropCanvas" style="touch-action:none;max-width:none;margin:auto;flex:none;"></canvas>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;color:#ccc;font-size:13px;flex-wrap:wrap;justify-content:center;">
+    <button class="btn secondary small" type="button" onclick="idCropZoomBy(1/1.25)">−</button>
+    <input id="idCropZoom" type="range" min="1" max="5" step="0.05" value="1" oninput="setIdZoom(+this.value)" style="width:150px;">
+    <button class="btn secondary small" type="button" onclick="idCropZoomBy(1.25)">+</button>
+    <span id="idCropZoomLbl">100%</span>
+    
+  </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
     <button class="btn secondary small" type="button" onclick="idCropAuto()">🔍 Auto-detect ID</button>
     <button class="btn secondary small" type="button" onclick="idCropRotate()">⟳ Rotate</button>
@@ -4912,6 +5047,20 @@ if(sb){
     <button class="btn secondary small" type="button" onclick="idCropCancel()">Cancel</button>
   </div>
   <div id="idCropMsg" style="color:#ccc;font-size:13px;"></div>
+</div>
+<div id="idZoomOverlay" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:1200;display:flex;flex-direction:column;">
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;color:#fff;gap:8px;flex-wrap:wrap;">
+    <strong id="idZoomTitle">ID</strong>
+    <div style="display:flex;gap:6px;">
+      <button class="btn secondary small" type="button" onclick="idZoomBy(1/1.4)">−</button>
+      <button class="btn secondary small" type="button" onclick="idZoomBy(1.4)">+</button>
+      <button class="btn secondary small" type="button" onclick="idZoomReset()">Fit</button>
+      <button class="btn small" type="button" onclick="closeIdZoom()">✕ Close</button>
+    </div>
+  </div>
+  <div id="idZoomStage" style="flex:1;overflow:hidden;position:relative;touch-action:none;">
+    <img id="idZoomImg" alt="ID" draggable="false" style="position:absolute;left:0;top:0;transform-origin:0 0;user-select:none;max-width:none;">
+  </div>
 </div>
 <div id="planFormOverlay" class="hidden" style="position:fixed;inset:0;background:var(--bg);z-index:1050;overflow:auto;padding:14px;"></div>
 <div id="previewOverlay" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:1000;display:flex;flex-direction:column;">
