@@ -4843,20 +4843,19 @@ async function toggleBulkPayment(){
   document.getElementById('bulkThrough').value = t.slice(0,7);
   document.getElementById('bulkDate').value = t;
   document.getElementById('bulkDate').max = t;
-  const [{ data: b }, { data: l }] = await Promise.all([ sb.from('buildings').select('name, location_id').order('name'), sb.from('locations').select('id, name').order('name') ]);
-  bulkBlds = (b||[]).filter(x=>x.name);
+  const [{ data: b }, { data: l }] = await Promise.all([ sb.from('buildings').select('id, name, location_id').order('name'), sb.from('locations').select('id, name').order('name') ]);
+  bulkBlds = (b||[]).filter(x=>x.name); bulkLocName = {}; (l||[]).forEach(x=>{ bulkLocName[x.id] = x.name; });
   document.getElementById('bulkLocation').innerHTML = '<option value="">All locations</option>' + (l||[]).map(x=>`<option value="${x.id}">${bulkEsc(x.name)}</option>`).join('');
   bulkFillBuildings();
   bulkPreview();
 }
-let bulkBlds = [];
-function bulkNamesInLocation(){
-  const loc = document.getElementById('bulkLocation').value;
-  return [...new Set(bulkBlds.filter(x=>!loc || x.location_id===loc).map(x=>x.name))];
-}
+let bulkBlds = [], bulkLocName = {};
 function bulkFillBuildings(){
-  const sel = document.getElementById('bulkBuilding');
-  sel.innerHTML = '<option value="">All buildings</option>' + bulkNamesInLocation().map(n=>`<option value="${bulkEsc(n)}">${bulkEsc(n)}</option>`).join('');
+  const loc = document.getElementById('bulkLocation').value;
+  const list = bulkBlds.filter(x=>!loc || x.location_id===loc);
+  const dupName = n => bulkBlds.filter(x=>x.name===n).length > 1;
+  document.getElementById('bulkBuilding').innerHTML = '<option value="">All buildings</option>' +
+    list.map(x=>`<option value="${x.id}">${bulkEsc(x.name)}${!loc && dupName(x.name) && bulkLocName[x.location_id] ? ' — '+bulkEsc(bulkLocName[x.location_id]) : ''}</option>`).join('');
 }
 function bulkLocChanged(){ bulkFillBuildings(); bulkPreview(); }
 async function bulkPreview(){
@@ -4866,12 +4865,10 @@ async function bulkPreview(){
   list.innerHTML = '<p class="muted">Loading…</p>';
   const [y,m] = ym.split('-').map(Number);
   const endISO = `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2,'0')}`;
-  const bld = document.getElementById('bulkBuilding').value;
+  const bld = document.getElementById('bulkBuilding').value, loc = document.getElementById('bulkLocation').value;
   let all = [];
   for(let from=0; from<20000; from+=1000){
     let q = sb.from('v_payment_detail').select('*').in('status',['pending','partial','overdue']).lte('period_start', endISO);
-    if(bld) q = q.eq('building_name', bld);
-    else if(document.getElementById('bulkLocation').value) q = q.in('building_name', bulkNamesInLocation());
     const { data, error } = await q.order('renter_name').order('period_start').range(from, from+999);
     if(error){ list.innerHTML = `<p class="muted">Could not load: ${bulkEsc(error.message)}</p>`; return; }
     all = all.concat(data||[]);
@@ -4884,7 +4881,16 @@ async function bulkPreview(){
     const { data: cs } = await sb.from('contracts').select('id,status,recover_dues').in('id', cids.slice(i,i+200));
     (cs||[]).forEach(c=>{ if(c.status!=='cancelled' || c.recover_dues) ok.add(c.id); });
   }
-  bulkRows = all.filter(r=>ok.has(r.contract_id) && Number(r.amount_due)-Number(r.amount_paid) > 0.004)
+  // Where each contract really is: from its linked units (not from the building NAME, which can repeat in other locations)
+  const where = {};
+  for(let i=0;i<cids.length;i+=200){
+    const { data: cu } = await sb.from('contract_units').select('contract_id, units(unit_name, building_id, buildings(name, location_id))').in('contract_id', cids.slice(i,i+200));
+    (cu||[]).forEach(x=>{ const u = x.units, b = u && u.buildings; (where[x.contract_id] ||= []).push({ unit:u?.unit_name, bid:u?.building_id, bname:b?.name, lid:b?.location_id }); });
+  }
+  const inScope = cid => { const w = where[cid]; if(!bld && !loc) return true; if(!w) return false; return w.some(x=>(!bld || x.bid===bld) && (!loc || x.lid===loc)); };
+  bulkRows = all.filter(r=>ok.has(r.contract_id) && inScope(r.contract_id) && Number(r.amount_due)-Number(r.amount_paid) > 0.004)
+                .map(r=>{ const w = (where[r.contract_id]||[]).filter(x=>(!bld || x.bid===bld) && (!loc || x.lid===loc)); const ww = w.length ? w : (where[r.contract_id]||[]);
+                  return ww.length ? { ...r, unit_name: ww.map(x=>x.unit).filter(Boolean).join(', ') || r.unit_name, building_name: [...new Set(ww.map(x=>x.bname).filter(Boolean))].join(', ') || r.building_name } : r; })
                 .map(r=>({ ...r, balance: Math.round((Number(r.amount_due)-Number(r.amount_paid))*100)/100, checked:true }));
   bulkRender();
 }
