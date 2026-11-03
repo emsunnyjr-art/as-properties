@@ -2476,7 +2476,7 @@ function addRenterFromContract(){
   openRenterForm();
 }
 
-async function startEditRenter(id){
+async function startEditRenter(id, toIdBox){
   const { data: r } = await sb.from('renters').select('*').eq('id', id).single();
   if(!r) return;
   editingRenterId = id;
@@ -2495,7 +2495,7 @@ async function startEditRenter(id){
   document.getElementById('renterSubmitBtn').textContent = 'Save changes';
   clearRenterDetail();
   document.getElementById('renterFormCard').classList.remove('hidden');
-  document.getElementById('renterFormTitle').scrollIntoView({behavior:'smooth'});
+  (toIdBox ? document.getElementById('rIdBox') : document.getElementById('renterFormTitle')).scrollIntoView({behavior:'smooth', block:'center'});
 }
 
 function openRenterForm(){
@@ -2583,6 +2583,13 @@ async function showRenterDetailInner(renterId, fromPop){
     <div style="margin:12px 0 4px;"><span style="font-size:22px;font-weight:800;">${bulkEsc(r.name)}</span>${r.business_name ? ` <span class="muted">${bulkEsc(r.business_name)}</span>` : ''}</div>
     <div class="muted">${r.renter_code ? bulkEsc(r.renter_code)+' · ' : ''}${activeContracts.length ? bulkEsc(activeContracts.map(c=>c.unit_names.join(', ')).join(' | ')) : 'No unit rented now'}</div>
     <div class="card" style="margin-top:12px;">
+      <p class="section-title" style="margin-top:0;">Renter ID</p>
+      <div id="renterDetailId" style="margin:6px 0;"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn secondary big" onclick="startEditRenter('${r.id}', true)">🪪 ${r.id_file_path ? 'Replace ID / edit renter' : 'Add ID photo'}</button>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px;">
       <div class="muted" style="font-size:14px;">${totalOwed>0 ? 'Owed now' : 'Nothing owed'}</div>
       <div class="rdOwed" style="color:${totalOwed>0?'var(--bad)':'var(--good)'};">${fmtMoney(totalOwed)}</div>
       ${mainBtn}
@@ -2600,7 +2607,6 @@ async function showRenterDetailInner(renterId, fromPop){
       </div>
       <p class="muted" style="margin:4px 0;">${bulkEsc(r.address||'—')} · ${bulkEsc(r.contact_number||'—')}${r.email ? ' · '+bulkEsc(r.email) : ''}</p>
       ${renterPortalHtml(r)}
-      <div id="renterDetailId" style="margin:8px 0;"></div>
       <p style="margin:6px 0;"><strong>Units rented now:</strong> ${activeContracts.length ? activeContracts.map(c=>c.unit_names.join(', ')).join(' · ') : '<span class="muted">none</span>'}</p>
       <div class="grid" style="margin:14px 0;">
         <div class="stat"><div class="num" style="font-size:18px;">${activeContracts.reduce((n,c)=>n+c.unit_names.length,0)}</div><div class="lbl">Units currently held</div></div>
@@ -2629,6 +2635,7 @@ async function showRenterDetailInner(renterId, fromPop){
       </table>
     </details>
   </div>`;
+  if(!r.id_file_path){ const e = document.getElementById('renterDetailId'); if(e) e.innerHTML = `<div onclick="startEditRenter('${r.id}', true)" style="width:100%;max-width:300px;aspect-ratio:1.586/1;border:2px dashed var(--border,#555);border-radius:10px;display:flex;align-items:center;justify-content:center;text-align:center;cursor:pointer;"><div><div style="font-size:30px;">🪪</div><strong>No ID yet — tap to add</strong></div></div>`; }
   if(r.id_file_path && /\.(jpe?g|png|webp|gif|heic)$/i.test(r.id_file_path)){
     const { data: su } = await sb.storage.from('contract-files').createSignedUrl(r.id_file_path, 3600);
     const box = document.getElementById('renterDetailId');
