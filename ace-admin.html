@@ -149,7 +149,7 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
     <button id="navBackBtn" class="btn secondary small hidden" onclick="navBack()">&larr; Back</button>
     <button class="btn secondary small deskOnly" onclick="showChangePassword()">Change Password</button>
     <button class="btn secondary small deskOnly" onclick="logoutApp()">Log out</button>
-    <button class="btn secondary small" onclick="loadAll()">Refresh</button>
+    <button class="btn secondary small" id="refreshBtn" onclick="refreshNow()">Refresh</button>
   </div>
 </header>
 
@@ -763,6 +763,23 @@ async function loadAll(){
   onRentPeriodChange();
   await Promise.all([loadDashboard(), loadPropertyDropdowns(), loadUnitsTable(),
     loadRenters(), loadContractCascadingData(), loadContractsTable(), loadPayContractSelect(), loadPaymentMethods()]);
+}
+
+// Refresh button: shows that it is working, then when it finished. Does not touch any form you are filling in.
+let refreshTimer = null;
+async function refreshNow(){
+  const btn = document.getElementById('refreshBtn'); if(!btn || btn.disabled || !sb) return;
+  clearTimeout(refreshTimer);
+  btn.disabled = true; btn.textContent = 'Refreshing\u2026'; btn.style.color = '';
+  let ok = true;
+  try{
+    await Promise.all([loadDashboard(), loadPropertyDropdowns(), loadUnitsTable(), loadRenters(), loadContractCascadingData(),
+      loadContractsTable(), loadPayContractSelect(), loadPaymentMethods()]);
+  }catch(e){ ok = false; console.error('refresh failed', e); }
+  btn.disabled = false;
+  btn.textContent = ok ? 'Updated ' + new Date().toLocaleTimeString('en-PH',{timeZone:'Asia/Manila', hour:'numeric', minute:'2-digit'}) : 'Refresh failed, tap to retry';
+  btn.style.color = ok ? 'var(--good)' : 'var(--bad)';
+  refreshTimer = setTimeout(()=>{ btn.textContent = 'Refresh'; btn.style.color = ''; }, 5000);
 }
 
 // ---------- CASCADING LOCATION -> BUILDING -> UNIT (Contracts form) ----------
