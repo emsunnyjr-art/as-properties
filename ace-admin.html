@@ -601,10 +601,16 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
     <div class="card">
       <p class="section-title">Contract you are working on</p>
       <p class="muted" style="margin-top:-6px;">The schedule, itemized bill and every payment below apply to this contract only. A renter with two contracts has two entries.</p>
-      <select id="payContractSelect" onchange="loadPaymentSchedule(); loadItemizedBill();"></select>
+      <div class="row" style="margin-bottom:6px;">
+        <div><label>Location</label><select id="payFLoc" onchange="payFilterLocChanged()"><option value="">All locations</option></select></div>
+        <div><label>Building</label><select id="payFBld" onchange="renderPayRoll()"><option value="">All buildings</option></select></div>
+        <div><label>Renter</label><input id="payFRenter" placeholder="type a name or unit" oninput="renderPayRoll()"></div>
+      </div>
+      <select id="payContractSelect" size="8" style="height:auto;" onchange="loadPaymentSchedule(); loadItemizedBill();"></select>
+      <p class="muted" style="margin:4px 0 0;">Everyone is listed: most months late first, then the oldest due date. Paid-up renters are at the bottom.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;">
-        <button class="btn secondary small" onclick="openPaidHistory({contractId:document.getElementById('payContractSelect').value})">📜 Paid history — this contract</button>
-        <button class="btn secondary small" onclick="openPaidHistory({contractId:document.getElementById('payContractSelect').value, wholeRenter:true})">📜 Paid history — all this renter's units</button>
+        <button class="btn small" onclick="openPaidHistory({contractId:document.getElementById('payContractSelect').value})">📜 Show history — this contract (undo payments)</button>
+        <button class="btn secondary small" onclick="openPaidHistory({contractId:document.getElementById('payContractSelect').value, wholeRenter:true})">📜 Show history — all this renter's units</button>
       </div>
       <div id="payForBanner"></div>
     </div>
@@ -4092,22 +4098,55 @@ async function loadPayContractSelect(){
   const sel = document.getElementById('payContractSelect');
   const keep = sel.value;                       // never jump to another contract when the list refreshes
   const [{ data }, { data: bals }] = await Promise.all([
-    sb.from('contracts').select('id, status, recover_dues, rent_amount, rent_period, start_date, renters(name), contract_units(units(unit_name, buildings(name)))')
+    sb.from('contracts').select('id, status, recover_dues, rent_amount, rent_period, start_date, renters(name), contract_units(units(unit_name, building_id, buildings(name, location_id)))')
       .or('status.eq.active,and(status.eq.cancelled,recover_dues.eq.true)'),
     sb.from('v_contract_balance').select('contract_id, balance, periods_unpaid')
   ]);
+  // how many months are already past their due date, and the oldest one, per contract
+  const lateBy = {};
+  { const t = manilaToday();
+    const { data: late } = await sb.from('rent_payments').select('contract_id, due_date, status').in('status',['pending','partial','overdue']).lt('due_date', t).range(0,4999);
+    (late||[]).forEach(x=>{ const o = (lateBy[x.contract_id] ||= { n:0, oldest:x.due_date }); o.n++; if(x.due_date < o.oldest) o.oldest = x.due_date; }); }
   const bal = Object.fromEntries((bals||[]).map(x=>[x.contract_id, Number(x.balance)||0]));
   payContractInfo = {};
   const list = (data||[]).map(c=>{
     const units = (c.contract_units||[]).map(x=>x.units?.unit_name).filter(Boolean).map(n=>n.trim());
     const blds = [...new Set((c.contract_units||[]).map(x=>x.units?.buildings?.name).filter(Boolean))];
     const owes = bal[c.id] || 0;
-    const info = { renter: c.renters?.name||'—', units: units.join(', ')||'—', bld: blds.join(', '), rent: c.rent_amount, period: c.rent_period, start: c.start_date, status: c.status, owes };
+    const bids = [...new Set((c.contract_units||[]).map(x=>x.units?.building_id).filter(Boolean))], lids = [...new Set((c.contract_units||[]).map(x=>x.units?.buildings?.location_id).filter(Boolean))];
+    const info = { bids, lids, renter: c.renters?.name||'—', units: units.join(', ')||'—', bld: blds.join(', '), rent: c.rent_amount, period: c.rent_period, start: c.start_date, status: c.status, owes, late: lateBy[c.id]?.n || 0, oldest: lateBy[c.id]?.oldest || null };
     payContractInfo[c.id] = info;
     return { id:c.id, info };
-  }).sort((x,y)=> x.info.renter.localeCompare(y.info.renter) || String(y.info.start).localeCompare(String(x.info.start)));
-  sel.innerHTML = list.map(({id, info})=>`<option value="${id}">${bulkEsc(info.renter)} — ${bulkEsc(info.units)} · ${fmtMoney(info.rent)} ${({monthly:'a month',weekly:'a week',daily:'a day',yearly:'a year'})[info.period]||info.period} · ${info.owes>0 ? 'owes '+fmtMoney(info.owes) : 'paid up'}${info.status==='cancelled' ? ' · cancelled' : ''}</option>`).join('');
-  if(keep && payContractInfo[keep]) sel.value = keep;
+  // roll order: most months past due first, then the oldest due date, then the biggest balance; paid-up renters last (A–Z)
+  }).sort((x,y)=> (y.info.late - x.info.late) || String(x.info.oldest||'9').localeCompare(String(y.info.oldest||'9')) || (y.info.owes - x.info.owes) || x.info.renter.localeCompare(y.info.renter) || String(y.info.start).localeCompare(String(x.info.start)));
+  payRollAll = list;
+  await payFillFilters();
+  renderPayRoll(keep);
+}
+let payRollAll = [], payLocs = [], payBlds = [];
+async function payFillFilters(){
+  if(!payLocs.length){
+    const [{ data: l }, { data: b }] = await Promise.all([ sb.from('locations').select('id, name').order('name'), sb.from('buildings').select('id, name, location_id').order('name') ]);
+    payLocs = l||[]; payBlds = b||[];
+    document.getElementById('payFLoc').innerHTML = '<option value="">All locations</option>' + payLocs.map(x=>`<option value="${x.id}">${bulkEsc(x.name)}</option>`).join('');
+  }
+  payFillBuildings();
+}
+function payFillBuildings(){
+  const loc = document.getElementById('payFLoc').value, cur = document.getElementById('payFBld').value;
+  const list = payBlds.filter(b=>!loc || b.location_id===loc);
+  document.getElementById('payFBld').innerHTML = '<option value="">All buildings</option>' + list.map(b=>`<option value="${b.id}">${bulkEsc(b.name)}</option>`).join('');
+  if(list.some(b=>b.id===cur)) document.getElementById('payFBld').value = cur;
+}
+function payFilterLocChanged(){ payFillBuildings(); renderPayRoll(); }
+function renderPayRoll(keepId){
+  const sel = document.getElementById('payContractSelect');
+  const keep = keepId !== undefined ? keepId : sel.value;
+  const loc = document.getElementById('payFLoc').value, bld = document.getElementById('payFBld').value, q = (document.getElementById('payFRenter').value||'').trim().toLowerCase();
+  const list = payRollAll.filter(({info})=> (!loc || info.lids.includes(loc)) && (!bld || info.bids.includes(bld)) && (!q || `${info.renter} ${info.units}`.toLowerCase().includes(q)));
+  if(!list.length){ sel.innerHTML = '<option value="">No renter matches these filters</option>'; document.getElementById('scheduleTable').innerHTML = ''; document.getElementById('payForBanner').innerHTML = ''; return; }
+  sel.innerHTML = list.map(({id, info})=>`<option value="${id}">${bulkEsc(info.renter)} — ${bulkEsc(info.units)} · ${fmtMoney(info.rent)} ${({monthly:'a month',weekly:'a week',daily:'a day',yearly:'a year'})[info.period]||info.period} · ${info.owes>0 ? 'owes '+fmtMoney(info.owes) : 'paid up'}${info.late ? ' · '+info.late+' month'+(info.late===1?'':'s')+' late since '+fmtDate(info.oldest) : ''}${info.status==='cancelled' ? ' · cancelled' : ''}</option>`).join('');
+  if(keep && list.some(x=>x.id===keep)) sel.value = keep; else sel.selectedIndex = 0;   // default = the renter who needs attention most
   if(list.length){ loadPaymentSchedule(); loadItemizedBill(); }
 }
 function payForBanner(contractId){
@@ -4909,7 +4948,8 @@ function bulkRender(){
   const list = document.getElementById('bulkList');
   const vis = bulkVisible();
   if(!vis.length){ list.innerHTML = '<p class="muted">Nothing unpaid for this selection.</p>'; bulkTotals(); return; }
-  list.innerHTML = `<div style="max-height:380px;overflow:auto;"><table>
+  const nRent = new Set(vis.map(r=>r.renter_name)).size;
+  list.innerHTML = `<p class="muted" style="margin:0 0 6px;">${vis.length} unpaid month${vis.length===1?'':'s'} · ${nRent} renter${nRent===1?'':'s'} (scroll down for the rest, or type a name in the search box)</p><div style="max-height:65vh;overflow:auto;"><table>
     <thead><tr><th><input type="checkbox" id="bulkAll" checked onchange="bulkToggleAll(this.checked)"></th><th>Renter</th><th>Unit</th><th>Period</th><th>Balance</th></tr></thead>
     <tbody>${vis.map(r=>`<tr>
       <td><input type="checkbox" ${r.checked?'checked':''} onchange="bulkToggle('${r.payment_id}',this.checked)"></td>
@@ -4968,11 +5008,12 @@ async function loadPaymentSchedule(){
       <td>${fmtDate(p.due_date)}</td>
       <td>${fmtMoney(p.amount_due)}</td>
       <td>${fmtMoney(p.amount_paid)}</td>
-      <td>${remaining > 0 ? fmtMoney(remaining) : '—'}</td>
+      <td>${remaining > 0 ? fmtMoney(remaining) : (Number(p.amount_paid) > Number(p.amount_due)+0.005 ? `<span style="color:var(--bad);font-weight:700;">Over by ${fmtMoney(Number(p.amount_paid)-Number(p.amount_due))}</span>` : '—')}</td>
       <td><span class="badge b-${p.status}">${p.status}</span></td>
       <td>${p.receipt_path ? `<button class="btn secondary small" onclick="viewStoredFile('${p.receipt_path.replace(/'/g,"\\'")}','Payment receipt')">Receipt</button>` : '—'}</td>
       <td>
         ${remaining > 0 ? `<button class="btn small" onclick="startRecordPayment('${p.id}', ${remaining})">Record payment</button>` : ''}
+        ${Number(p.amount_paid) > 0 ? `<button class="btn danger small" onclick="quickUndoPayment('${p.id}')" title="Reverse the last payment marked on this month">↩ Undo paid</button>` : ''}
         <button class="btn secondary small" onclick="togglePaymentHistory('${p.id}')">History</button>
       </td>
     </tr>
@@ -5014,6 +5055,16 @@ async function togglePaymentHistory(id){
     </table>`;
 }
 
+async function quickUndoPayment(rentPaymentId){
+  const { data, error } = await sb.from('payments').select('*').eq('rent_payment_id', rentPaymentId).order('created_at');
+  if(error) return alert('Could not load the payments: ' + error.message);
+  const rev = new Set((data||[]).filter(x=>x.reverses_payment_id).map(x=>x.reverses_payment_id));
+  const live = (data||[]).filter(x=>x.kind!=='reversal' && !rev.has(x.id));
+  if(!live.length) return alert('There is no payment left to undo on this month.');
+  const last = live[live.length-1];
+  if(live.length > 1 && !confirm(`This month has ${live.length} payments. Undo the most recent one (${fmtMoney(last.amount)} received ${fmtDate(last.received_date)})?\nUse History to pick a different one.`)) return;
+  reversePayment(last.id, last.amount, rentPaymentId);
+}
 async function reversePayment(paymentId, amount, rentPaymentId){
   const reason = prompt(`Reverse this ${peso(amount)} payment?\nThe original stays in the history. Reason (required):`);
   if(reason === null) return;
