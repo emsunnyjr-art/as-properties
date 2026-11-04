@@ -4946,7 +4946,7 @@ async function bulkPreview(){
   bulkRows = all.filter(r=>ok.has(r.contract_id) && inScope(r.contract_id) && Number(r.amount_due)-Number(r.amount_paid) > 0.004)
                 .map(r=>{ const w = (where[r.contract_id]||[]).filter(x=>(!bld || x.bid===bld) && (!loc || x.lid===loc)); const ww = w.length ? w : (where[r.contract_id]||[]);
                   return ww.length ? { ...r, unit_name: ww.map(x=>x.unit).filter(Boolean).join(', ') || r.unit_name, building_name: [...new Set(ww.map(x=>x.bname).filter(Boolean))].join(', ') || r.building_name } : r; })
-                .map(r=>({ ...r, balance: Math.round((Number(r.amount_due)-Number(r.amount_paid))*100)/100, checked:true }));
+                .map(r=>({ ...r, balance: Math.round((Number(r.amount_due)-Number(r.amount_paid))*100)/100, checked: r.due_date <= manilaToday() }));   // only months already past due are ticked; not-yet-due months stay unticked
   bulkRender();
 }
 function bulkVisible(){
@@ -4958,7 +4958,7 @@ function bulkRender(){
   const vis = bulkVisible();
   if(!vis.length){ list.innerHTML = '<p class="muted">Nothing unpaid for this selection.</p>'; bulkTotals(); return; }
   const nRent = new Set(vis.map(r=>r.renter_name)).size;
-  list.innerHTML = `<p class="muted" style="margin:0 0 6px;">${vis.length} unpaid month${vis.length===1?'':'s'} · ${nRent} renter${nRent===1?'':'s'} (scroll down for the rest, or type a name in the search box)</p><div style="max-height:65vh;overflow:auto;"><table>
+  list.innerHTML = `<p class="muted" style="margin:0 0 6px;">${vis.length} unpaid month${vis.length===1?'':'s'} · ${nRent} renter${nRent===1?'':'s'} · only months already past due are ticked — tick a not-yet-due month yourself if it was paid early (scroll for the rest, or search a name)</p><div style="max-height:65vh;overflow:auto;"><table>
     <thead><tr><th><input type="checkbox" id="bulkAll" checked onchange="bulkToggleAll(this.checked)"></th><th>Renter</th><th>Unit</th><th>Period</th><th>Balance</th></tr></thead>
     <tbody>${vis.map(r=>`<tr>
       <td><input type="checkbox" ${r.checked?'checked':''} onchange="bulkToggle('${r.payment_id}',this.checked)"></td>
@@ -5038,7 +5038,7 @@ async function togglePaymentHistory(id){
   row.style.display = 'table-row';
   const body = document.getElementById('payHistBody-' + id);
   body.innerHTML = '<span class="muted">Loading…</span>';
-  const { data, error } = await sb.from('payments').select('*').eq('rent_payment_id', id).order('created_at');
+  const { data, error } = await sb.from('payments').select('*').eq('rent_payment_id', id).order('received_date').order('created_at');
   if(error){ body.innerHTML = `<span class="muted">Could not load the history (${error.message}).</span>`; return; }
   const reversed = new Set((data||[]).filter(x=>x.reverses_payment_id).map(x=>x.reverses_payment_id));
   if(!(data||[]).length){ body.innerHTML = '<span class="muted">No payments recorded for this period yet.</span>'; return; }
@@ -5308,10 +5308,10 @@ async function openPaidHistory(o){
     }
     const [{ data: ren }, { data: cons, error: ce }] = await Promise.all([
       sb.from('renters').select('name, business_name, renter_code').eq('id', renterId).single(),
-      sb.from('contracts').select('id, status, rent_amount, rent_period, start_date, end_date, recover_dues').eq('renter_id', renterId).order('start_date', { ascending:false })
+      sb.from('contracts').select('id, status, rent_amount, rent_period, start_date, end_date, recover_dues').eq('renter_id', renterId).order('start_date', { ascending:true })
     ]);
     if(ce) throw ce;
-    const contracts = (cons||[]).filter(c=>!only || c.id===only);
+    const contracts = (cons||[]).filter(c=>!only || c.id===only).sort((a,b)=>String(a.start_date).localeCompare(String(b.start_date)));   // oldest contract first
     const cids = contracts.map(c=>c.id);
     const unitsBy = {}, rows = [], led = {};
     if(cids.length){
@@ -5336,7 +5336,7 @@ async function openPaidHistory(o){
     contracts.forEach(c=>{
       const us = unitsBy[c.id] || [], label = us.map(x=>x.n).join(', ') || '—';
       const where = [...new Set(us.map(x=>[x.b,x.l].filter(Boolean).join(' · ')).filter(Boolean))].join(' | ');
-      const mine = rows.filter(r=>r.contract_id===c.id);
+      const mine = rows.filter(r=>r.contract_id===c.id).sort((a,b)=>String(a.period_start).localeCompare(String(b.period_start)) || String(a.due_date).localeCompare(String(b.due_date)));   // oldest month first
       const shown = mine.filter(r=>r.due_date <= today || Number(r.amount_paid) > 0 || r.status==='waived');
       const hidden = mine.length - shown.length;
       const due = shown.filter(r=>r.status!=='waived').reduce((a,r)=>a+Number(r.amount_due),0), paid = shown.reduce((a,r)=>a+Number(r.amount_paid),0);
@@ -5348,6 +5348,7 @@ async function openPaidHistory(o){
           const revd = new Set(pl.filter(x=>x.reverses_payment_id).map(x=>x.reverses_payment_id));
           const live = pl.filter(x=>x.kind!=='reversal' && !revd.has(x.id));
           const lastId = live.length ? live[live.length-1].id : null;
+          pl.sort((a,b)=>String(a.received_date).localeCompare(String(b.received_date)) || String(a.created_at).localeCompare(String(b.created_at)));
           const pays = pl.map(p=>{
             const isRev = p.kind==='reversal', was = revd.has(p.id);
             const txt = `${dt(p.received_date)} · ${esc(p.method||'')}${p.kind==='opening'?' (carried over)':''} · ${p.amount<0?'−':''}${money(Math.abs(p.amount))}${p.reference?' · '+esc(p.reference):''}`;
@@ -5365,7 +5366,7 @@ async function openPaidHistory(o){
       table{border-collapse:collapse;width:100%;font-size:13px}th,td{border-bottom:1px solid #ddd;padding:5px 6px;text-align:left;vertical-align:top}th{background:#f3f3f3}.n{text-align:right;white-space:nowrap}
       .wr{text-decoration:line-through;color:#999}.rv{color:#c0392b}.pl{margin:2px 0}.pl.last{background:#fff8e1;border-radius:4px;padding:1px 3px}button{font-size:12px;padding:2px 7px;margin-left:3px;border:1px solid #999;border-radius:6px;background:#f5f5f5;cursor:pointer}button.dn{border-color:#c0392b;color:#c0392b}
       @media print{body{padding:0}.no-print{display:none}}</style>
-      <h1>Paid history — ${esc(title)}</h1><div class="sub">${esc(ren?.renter_code||'')} · as of ${dt(today)} · ${only?'this contract':'all contracts and units'}</div>
+      <h1>Paid history — ${esc(title)}</h1><div class="sub">${esc(ren?.renter_code||'')} · oldest first · as of ${dt(today)} · ${only?'this contract':'all contracts and units'}</div>
       ${contracts.length>1||!only ? `<div class="sum" style="margin-top:10px"><b>Total billed ${money(gDue)} · Total paid ${money(gPaid)} · Balance ${money(Math.max(0,gDue-gPaid))}</b></div>` : ''}
       ${body || '<p class="m">No contracts on file.</p>'}</body>`;
     document.getElementById('previewTitle').textContent = 'Paid history — ' + title;
