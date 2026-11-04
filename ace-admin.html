@@ -161,6 +161,7 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
   <button data-tab="renters">Renters</button>
   <button data-tab="contracts">Contracts</button>
   <button data-tab="payments">Payments</button>
+  <button data-tab="bills">Bills</button>
   <button data-tab="reports">Reports</button>
   <button data-tab="alerts">Alerts</button>
 </nav>
@@ -284,11 +285,65 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
 
   </section>
 
+  <!-- ============ BILLS ============ -->
+  <section id="tab-bills" class="hidden">
+    <div class="card">
+      <p class="section-title" id="billFormTitle">Add a bill</p>
+      <p class="muted">Electric / water: type the new sub-meter reading — the app subtracts the previous reading and multiplies by the rate. Internet, hauling, damages and others: just type the amount.</p>
+      <div class="row">
+        <div><label>Unit (renter)</label><select id="bUnit" onchange="billFormChanged(true)"></select></div>
+        <div><label>Bill type</label><select id="bType" onchange="billFormChanged(true)">
+          <option value="electric">Electric</option><option value="water">Water</option><option value="internet">Internet</option>
+          <option value="hauling">Hauling / Trash</option><option value="damage">Damage</option><option value="other">Other</option></select></div>
+        <div><label>Billing month</label><input id="bMonth" type="month"></div>
+      </div>
+      <div id="bMeterBox" style="margin-top:8px;">
+        <div class="row">
+          <div><label>Reading date</label><input id="bReadDate" type="date"></div>
+          <div><label>Previous reading</label><input id="bPrev" type="number" step="0.01" inputmode="decimal" oninput="billCalc()"></div>
+          <div><label>New (current) reading</label><input id="bCurr" type="number" step="0.01" inputmode="decimal" oninput="billCalc()"></div>
+          <div><label>Rate per <span id="bUnitLbl">kWh</span> (₱)</label><input id="bRate" type="number" step="0.0001" inputmode="decimal" oninput="billCalc()"></div>
+        </div>
+        <p class="muted" id="bMeterHint"></p>
+      </div>
+      <div class="row">
+        <div><label>Amount (₱)</label><input id="bAmount" type="number" step="0.01" inputmode="decimal"></div>
+        <div><label>Due date</label><input id="bDue" type="date" oninput="this.dataset.touched=1"></div>
+        <div><label>Note / description</label><input id="bDesc" placeholder="e.g. broken faucet, Globe 50 Mbps"></div>
+      </div>
+      <label>Sub-meter / proof photo (kept for 3 months)</label>
+      <div id="bPhotoBox" onclick="document.getElementById('bPhotoFile').click()" style="border:2px dashed var(--border,#444);border-radius:10px;min-height:90px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:8px;text-align:center;">
+        <span class="muted">📷 Tap to take or choose a photo of the meter</span>
+      </div>
+      <input id="bPhotoFile" type="file" accept="image/*" class="hidden" onchange="billPhotoPicked(this)">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+        <button class="btn" onclick="billSave()">Save bill</button>
+        <button class="btn secondary" id="bCancelBtn" onclick="billFormReset()">Clear</button>
+      </div>
+    </div>
+
+    <div id="billSendPanel"></div>
+    <div id="billNotifyPanel"></div>
+
+    <div class="card">
+      <p class="section-title">Bills</p>
+      <div class="row">
+        <div><label>Building</label><select id="bfBuilding" onchange="billRender()"></select></div>
+        <div><label>Type</label><select id="bfType" onchange="billRender()"><option value="">All</option><option value="electric">Electric</option><option value="water">Water</option><option value="internet">Internet</option><option value="hauling">Hauling</option><option value="damage">Damage</option><option value="other">Other</option></select></div>
+        <div><label>Show</label><select id="bfStatus" onchange="billRender()"><option value="unpaid">Unpaid</option><option value="paid">Paid</option><option value="">All</option></select></div>
+        <div><label>Search</label><input id="bfText" placeholder="unit or renter" oninput="billRender()"></div>
+      </div>
+      <p id="billSummary" class="muted" style="margin:8px 0;"></p>
+      <div id="billList"></div>
+    </div>
+  </section>
+
   <!-- ============ MORE (phone) ============ -->
   <section id="tab-more" class="hidden">
     <p class="section-title" style="font-size:18px;">More</p>
     <div class="moreList">
       <button onclick="switchToTab('properties')"><span>Properties</span><small>Buildings, units, floor plans</small></button>
+      <button onclick="switchToTab('bills')"><span>Bills</span><small>Electric, water, internet, damages</small></button>
       <button onclick="switchToTab('contracts')"><span>Contracts</span><small>New contract, renew, cancel</small></button>
       <button onclick="switchToTab('reports')"><span>Reports</span><small>Charts, unpaid table, coming up</small></button>
       <button onclick="switchToTab('alerts')"><span>Alerts</span><small>Your email and mobile for payment proofs</small></button>
@@ -1236,6 +1291,7 @@ function switchToTab(name, fromPop){
   document.querySelectorAll('#bottomNav button').forEach(b=>b.classList.toggle('active', b.dataset.go === bottomKey));
   document.querySelectorAll('main > section').forEach(s=>s.classList.add('hidden'));
   document.getElementById('tab-'+name).classList.remove('hidden');
+  if(name === 'bills' && typeof billsOpen === 'function') billsOpen();
   if(name === 'reports' && window.Chart) setTimeout(()=>Object.values(Chart.instances||{}).forEach(c=>{ try{ c.resize(); }catch(_){} }), 50);
   if(!fromPop) window.scrollTo({ top:0, behavior:'smooth' });
 }
@@ -1954,7 +2010,7 @@ async function showUnitDetail(unitId){
       </table>
 
       <div class="row" style="margin-top:10px;">
-        <div><label>Type</label><select id="utilType"><option value="electric">Electric</option><option value="water">Water</option><option value="hauling">Hauling / Trash</option><option value="other">Other</option></select></div>
+        <div><label>Type</label><select id="utilType"><option value="electric">Electric</option><option value="water">Water</option><option value="internet">Internet</option><option value="hauling">Hauling / Trash</option><option value="damage">Damage</option><option value="other">Other</option></select></div>
         <div><label>Billing month</label><input id="utilMonth" type="month"></div>
         <div><label>Amount</label><input id="utilAmount" type="number" step="0.01"></div>
       </div>
@@ -1985,9 +2041,9 @@ async function addUtility(unitId){
   if(!monthVal) return alert('Billing month is required');
   const billing_month = monthVal + '-01';
   const { data: activeContract } = await sb.from('contracts').select('id').eq('unit_id', unitId).eq('status','active').maybeSingle();
-  const { error } = await sb.from('utilities').upsert({
+  const { error } = await sb.from('utilities').insert({
     unit_id: unitId, contract_id: activeContract?.id || null, utility_type, billing_month, amount
-  }, { onConflict: 'unit_id,utility_type,billing_month' });
+  });
   if(error) return alert('Error: ' + error.message);
   showUnitDetail(unitId);
 }
@@ -5466,5 +5522,323 @@ function printPreviewFrame(){
   catch(e){ alert('Could not open the print dialog for this preview.'); }
 }
 </script>
+<script>
+// ================= BILLS TAB =================
+const BILL_TYPES = {
+  electric:{ n:'Electric', metered:true, u:'kWh' }, water:{ n:'Water', metered:true, u:'m³' },
+  internet:{ n:'Internet' }, hauling:{ n:'Hauling / Trash' }, damage:{ n:'Damage' }, other:{ n:'Other' }
+};
+let billUnits = [], billRows = [], billPhotoBlob = null, billEditId = null, billEditPhotoPath = null, billReady = false;
+function billMonthLbl(d){ return d ? new Date(d+'T00:00:00').toLocaleDateString(undefined,{month:'short',year:'numeric'}) : '—'; }
+function billNum(n){ return Number(n).toLocaleString(undefined,{maximumFractionDigits:2}); }
+function billDesc(b){
+  const t = BILL_TYPES[b.utility_type] || { n:b.utility_type };
+  let s = t.n;
+  if(b.reading_curr != null && b.reading_prev != null){
+    const lbl = b.unit_label || t.u || 'units';
+    s += ` (reading ${billNum(b.reading_prev)} → ${billNum(b.reading_curr)} = ${billNum(b.units_used)} ${lbl} × ${fmtMoney(b.rate)})`;
+  }
+  if(b.description) s += ` — ${b.description}`;
+  return s;
+}
+
+async function billsOpen(){
+  if(!billReady){
+    const { data, error } = await sb.from('contract_units')
+      .select('unit_id, contract_id, units(unit_name, building_id, buildings(name, locations(name))), contracts(status, renter_id, renters(name))');
+    if(error){ document.getElementById('billList').innerHTML = `<p class="muted">Could not load units: ${bulkEsc(error.message)}</p>`; return; }
+    billUnits = (data||[]).filter(r=>r.contracts && r.contracts.status === 'active').map(r=>({
+      unit_id:r.unit_id, contract_id:r.contract_id, unit:r.units?.unit_name||'?', building_id:r.units?.building_id,
+      building:r.units?.buildings?.name||'', location:r.units?.buildings?.locations?.name||'',
+      renter:r.contracts?.renters?.name||'', renter_id:r.contracts?.renter_id
+    })).sort((a,b)=>(a.location+a.building+a.unit).localeCompare(b.location+b.building+b.unit, undefined, {numeric:true}));
+    document.getElementById('bUnit').innerHTML = `<option value="">Choose unit…</option>` + billUnits.map(u=>
+      `<option value="${u.unit_id}">${bulkEsc(u.building)} · ${bulkEsc(u.unit)} — ${bulkEsc(u.renter)}</option>`).join('');
+    const bl = []; const seen = new Set();
+    billUnits.forEach(u=>{ if(u.building_id && !seen.has(u.building_id)){ seen.add(u.building_id); bl.push(u); } });
+    document.getElementById('bfBuilding').innerHTML = `<option value="">All buildings</option>` + bl.map(u=>
+      `<option value="${u.building_id}">${bulkEsc(u.location)} — ${bulkEsc(u.building)}</option>`).join('');
+    const m = document.getElementById('bMonth'); if(!m.value) m.value = manilaToday().slice(0,7);
+    billReady = true;
+  }
+  await billCleanupPhotos();
+  await billLoad();
+}
+
+// keep only 3 months of meter photos
+async function billCleanupPhotos(){
+  try{
+    const cutoff = addMonthsISO(manilaToday(), -3);
+    const { data } = await sb.from('utilities').select('id, meter_photo_path')
+      .not('meter_photo_path','is',null).lt('billing_month', cutoff.slice(0,8)+'01');
+    // also use reading date when present
+    const { data: byRead } = await sb.from('utilities').select('id, meter_photo_path')
+      .not('meter_photo_path','is',null).lt('reading_date', cutoff);
+    const all = {}; (data||[]).concat(byRead||[]).forEach(r=>all[r.id] = r.meter_photo_path);
+    const ids = Object.keys(all);
+    if(!ids.length) return;
+    await sb.storage.from('contract-files').remove(Object.values(all));
+    await sb.from('utilities').update({ meter_photo_path:null, photo_deleted_at:new Date().toISOString() }).in('id', ids);
+  }catch(e){ console.warn('photo cleanup', e); }
+}
+
+async function billLoad(){
+  const { data, error } = await sb.from('utilities').select('*').order('billing_month',{ascending:false}).order('created_at',{ascending:false}).limit(600);
+  if(error){ document.getElementById('billList').innerHTML = `<p class="muted">Could not load bills: ${bulkEsc(error.message)}. Run ace-feature-update-40.sql first.</p>`; return; }
+  billRows = data || [];
+  billRender();
+}
+
+function billRender(){
+  const bf = document.getElementById('bfBuilding').value, tf = document.getElementById('bfType').value,
+        sf = document.getElementById('bfStatus').value, q = document.getElementById('bfText').value.trim().toLowerCase();
+  const umap = {}; billUnits.forEach(u=>umap[u.unit_id] = u);
+  const today = manilaToday();
+  const rows = billRows.filter(b=>{
+    const u = umap[b.unit_id];
+    if(bf && (!u || u.building_id !== bf)) return false;
+    if(tf && b.utility_type !== tf) return false;
+    if(sf && b.status !== sf) return false;
+    if(q && !((u?u.unit+' '+u.renter+' '+u.building:'')+' '+(b.description||'')).toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const owed = rows.filter(b=>b.status==='unpaid').reduce((s,b)=>s+Number(b.amount),0);
+  document.getElementById('billSummary').innerHTML = `${rows.length} bill${rows.length===1?'':'s'} · unpaid in this list: <b>${fmtMoney(owed)}</b>`;
+  document.getElementById('billList').innerHTML = rows.map(b=>{
+    const u = umap[b.unit_id];
+    const unpaid = b.status === 'unpaid';
+    const late = unpaid && b.due_date && b.due_date < today;
+    const photo = b.meter_photo_path
+      ? `<button class="btn secondary small" onclick="billViewPhoto('${b.id}')">📷 Photo</button>`
+      : (b.photo_deleted_at ? `<span class="muted" style="font-size:12px;">photo removed (3-month limit)</span>` : '');
+    return `<div class="card" style="margin:8px 0;padding:12px;">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+        <b>${u ? bulkEsc(u.building)+' · '+bulkEsc(u.unit)+' — '+bulkEsc(u.renter) : 'Unit (no active contract)'}</b>
+        <span><span class="badge b-${unpaid?(late?'overdue':'pending'):'paid'}">${unpaid?(late?'overdue':'unpaid'):'paid'}</span> <b>${fmtMoney(b.amount)}</b></span>
+      </div>
+      <div style="margin:4px 0;">${bulkEsc(billDesc(b))} · ${billMonthLbl(b.billing_month)}</div>
+      <div class="muted" style="font-size:12px;">${b.due_date ? 'Due '+fmtDate(b.due_date) : 'No due date'}${b.paid_date ? ' · paid '+fmtDate(b.paid_date) : ''}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center;">
+        ${photo}
+        ${unpaid ? `<button class="btn secondary small" onclick="billEdit('${b.id}')">Edit</button>
+          <button class="btn secondary small" onclick="billMarkPaid('${b.id}')">Mark paid</button>
+          <button class="btn small" onclick="billSend('${b.id}')">📤 Send</button>
+          <button class="btn secondary small" onclick="billDelete('${b.id}')">Delete</button>` : ''}
+      </div>
+    </div>`;
+  }).join('') || '<p class="muted">No bills match.</p>';
+}
+
+// ---------- the form ----------
+function billFormReset(){
+  billEditId = null; billEditPhotoPath = null; billPhotoBlob = null;
+  ['bPrev','bCurr','bRate','bAmount','bDesc','bDue','bReadDate'].forEach(i=>{ const e = document.getElementById(i); e.value = ''; delete e.dataset.touched; });
+  document.getElementById('bUnit').value = ''; document.getElementById('bUnit').disabled = false;
+  document.getElementById('bType').disabled = false;
+  document.getElementById('billFormTitle').textContent = 'Add a bill';
+  document.getElementById('bMeterHint').textContent = '';
+  billShowPhoto(null);
+  billFormChanged(false);
+}
+function billShowPhoto(url){
+  document.getElementById('bPhotoBox').innerHTML = url
+    ? `<img src="${url}" style="max-width:100%;max-height:220px;border-radius:8px;"><div style="margin-left:10px;"><button class="btn secondary small" type="button" onclick="event.stopPropagation();billPhotoClear()">✕ Remove</button></div>`
+    : `<span class="muted">📷 Tap to take or choose a photo of the meter</span>`;
+}
+function billPhotoClear(){ billPhotoBlob = null; billEditPhotoPath = null; document.getElementById('bPhotoFile').value = ''; billShowPhoto(null); }
+async function billCompress(file){
+  const url = URL.createObjectURL(file);
+  try{
+    const img = await new Promise((res,rej)=>{ const i = new Image(); i.onload = ()=>res(i); i.onerror = rej; i.src = url; });
+    const max = 1400, sc = Math.min(1, max/Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth*sc); c.height = Math.round(img.naturalHeight*sc);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return await new Promise(res=>c.toBlob(b=>res(b), 'image/jpeg', 0.75));
+  } finally { URL.revokeObjectURL(url); }
+}
+async function billPhotoPicked(inp){
+  const f = inp.files[0]; if(!f) return;
+  try{
+    billPhotoBlob = await billCompress(f);
+    billShowPhoto(URL.createObjectURL(billPhotoBlob));
+  }catch(e){ alert('Could not read that photo.'); }
+}
+
+async function billFormChanged(fetchPrev){
+  const type = document.getElementById('bType').value, t = BILL_TYPES[type];
+  document.getElementById('bMeterBox').classList.toggle('hidden', !t.metered);
+  document.getElementById('bUnitLbl').textContent = t.u || 'unit';
+  if(!document.getElementById('bReadDate').value) document.getElementById('bReadDate').value = manilaToday();
+  const unitId = document.getElementById('bUnit').value;
+  if(!fetchPrev || !unitId || billEditId) return;
+  if(t.metered){
+    const { data } = await sb.from('utilities').select('reading_curr, rate, reading_date, billing_month')
+      .eq('unit_id', unitId).eq('utility_type', type).not('reading_curr','is',null)
+      .order('reading_date',{ascending:false,nullsFirst:false}).order('billing_month',{ascending:false}).limit(1);
+    const last = data && data[0];
+    document.getElementById('bPrev').value = last ? last.reading_curr : '';
+    if(last && last.rate != null && !document.getElementById('bRate').value) document.getElementById('bRate').value = last.rate;
+    document.getElementById('bMeterHint').textContent = last
+      ? `Previous reading ${billNum(last.reading_curr)} was taken ${fmtDate(last.reading_date||last.billing_month)}.`
+      : 'No earlier reading on file for this unit — type the starting number as the previous reading.';
+    billCalc();
+  }
+  const bd = document.getElementById('bDue');
+  if(!bd.dataset.touched){
+    const u = billUnits.find(x=>x.unit_id === unitId);
+    let due = null;
+    if(u){
+      const { data: rp } = await sb.from('rent_payments').select('due_date').eq('contract_id', u.contract_id)
+        .in('status',['pending','partial','overdue']).gte('due_date', manilaToday()).order('due_date').limit(1);
+      due = rp && rp[0] ? rp[0].due_date : null;
+    }
+    bd.value = due || addDaysISO(manilaToday(), 7);
+  }
+}
+function billCalc(){
+  const p = parseFloat(document.getElementById('bPrev').value), c = parseFloat(document.getElementById('bCurr').value),
+        r = parseFloat(document.getElementById('bRate').value);
+  const hint = document.getElementById('bMeterHint');
+  if(isNaN(p) || isNaN(c)) return;
+  if(c < p){ hint.innerHTML = `<span style="color:var(--bad);">The new reading is lower than the previous one — check the numbers (or the meter was replaced/reset).</span>`; return; }
+  const used = Math.round((c-p)*100)/100;
+  hint.textContent = `Used ${billNum(used)} ${BILL_TYPES[document.getElementById('bType').value].u||''}` + (isNaN(r) ? ' — enter the rate to get the amount.' : ` × ${fmtMoney(r)} = ${fmtMoney(used*r)}`);
+  if(!isNaN(r)) document.getElementById('bAmount').value = (Math.round(used*r*100)/100).toFixed(2);
+}
+
+async function billSave(){
+  const unit_id = document.getElementById('bUnit').value, utility_type = document.getElementById('bType').value,
+        mon = document.getElementById('bMonth').value, t = BILL_TYPES[utility_type];
+  if(!unit_id) return alert('Choose the unit.');
+  if(!mon) return alert('Choose the billing month.');
+  const u = billUnits.find(x=>x.unit_id === unit_id);
+  const rec = { unit_id, contract_id:u?.contract_id || null, utility_type, billing_month:mon+'-01',
+    due_date:document.getElementById('bDue').value || null, description:document.getElementById('bDesc').value.trim() || null };
+  if(t.metered){
+    const p = parseFloat(document.getElementById('bPrev').value), c = parseFloat(document.getElementById('bCurr').value),
+          r = parseFloat(document.getElementById('bRate').value);
+    if(isNaN(p) || isNaN(c) || isNaN(r)) return alert('Type the previous reading, the new reading and the rate.');
+    if(c < p && !confirm('The new reading is lower than the previous one. Save anyway?')) return;
+    rec.reading_prev = p; rec.reading_curr = c; rec.rate = r; rec.units_used = Math.round((c-p)*100)/100; rec.unit_label = t.u;
+    rec.reading_date = document.getElementById('bReadDate').value || manilaToday();
+  } else {
+    Object.assign(rec, { reading_prev:null, reading_curr:null, rate:null, units_used:null, unit_label:null, reading_date:null });
+  }
+  const amount = parseFloat(document.getElementById('bAmount').value);
+  if(isNaN(amount) || amount < 0) return alert('Enter the amount.');
+  rec.amount = amount;
+  if(!t.metered && amount === 0) return alert('Enter the amount.');
+
+  let oldPath = null;
+  if(billEditId){ const old = billRows.find(r=>r.id === billEditId); oldPath = old?.meter_photo_path || null; }
+  let newPath = billEditPhotoPath;
+  if(billPhotoBlob){
+    newPath = `meters/${unit_id}/${utility_type}-${mon}-${Date.now()}.jpg`;
+    const up = await sb.storage.from('contract-files').upload(newPath, billPhotoBlob, { contentType:'image/jpeg', upsert:true });
+    if(up.error){ if(!confirm('The photo could not be uploaded ('+up.error.message+'). Save the bill without it?')) return; newPath = billEditPhotoPath; }
+  }
+  rec.meter_photo_path = newPath || null;
+  if(rec.meter_photo_path) rec.photo_deleted_at = null;
+  const res = billEditId ? await sb.from('utilities').update(rec).eq('id', billEditId) : await sb.from('utilities').insert(rec);
+  if(res.error){ alert('Could not save: ' + res.error.message); return; }
+  if(oldPath && oldPath !== rec.meter_photo_path) await sb.storage.from('contract-files').remove([oldPath]);
+  const keepMonth = document.getElementById('bMonth').value;
+  billFormReset(); document.getElementById('bMonth').value = keepMonth;
+  await billLoad();
+}
+
+function billEdit(id){
+  const b = billRows.find(r=>r.id === id); if(!b) return;
+  billFormReset(); billEditId = id;
+  document.getElementById('billFormTitle').textContent = 'Edit bill';
+  if(!billUnits.find(u=>u.unit_id === b.unit_id)){ alert('This unit has no active contract, so it cannot be edited here.'); billEditId = null; return; }
+  document.getElementById('bUnit').value = b.unit_id; document.getElementById('bUnit').disabled = true;
+  document.getElementById('bType').value = b.utility_type; document.getElementById('bType').disabled = true;
+  document.getElementById('bMonth').value = b.billing_month.slice(0,7);
+  document.getElementById('bReadDate').value = b.reading_date || manilaToday();
+  document.getElementById('bPrev').value = b.reading_prev ?? ''; document.getElementById('bCurr').value = b.reading_curr ?? '';
+  document.getElementById('bRate').value = b.rate ?? ''; document.getElementById('bAmount').value = b.amount;
+  document.getElementById('bDue').value = b.due_date || ''; document.getElementById('bDue').dataset.touched = 1;
+  document.getElementById('bDesc').value = b.description || '';
+  billEditPhotoPath = b.meter_photo_path || null;
+  billFormChanged(false);
+  if(b.meter_photo_path) sb.storage.from('contract-files').createSignedUrl(b.meter_photo_path, 600).then(({data})=>{ if(data) billShowPhoto(data.signedUrl); });
+  window.scrollTo({ top:0, behavior:'smooth' });
+}
+
+async function billViewPhoto(id){
+  const b = billRows.find(r=>r.id === id); if(!b || !b.meter_photo_path) return;
+  const { data, error } = await sb.storage.from('contract-files').createSignedUrl(b.meter_photo_path, 600);
+  if(error || !data) return alert('Could not open the photo.');
+  openIdZoom(data.signedUrl, 'Meter photo — ' + billMonthLbl(b.billing_month));
+}
+async function billDelete(id){
+  const b = billRows.find(r=>r.id === id); if(!b) return;
+  if(!confirm('Delete this unpaid bill (' + fmtMoney(b.amount) + ')?')) return;
+  const { error } = await sb.from('utilities').delete().eq('id', id);
+  if(error) return alert('Could not delete: ' + error.message);
+  if(b.meter_photo_path) await sb.storage.from('contract-files').remove([b.meter_photo_path]);
+  await billLoad();
+}
+async function billMarkPaid(id){
+  const b = billRows.find(r=>r.id === id); if(!b) return;
+  if(!confirm('Record ' + fmtMoney(b.amount) + ' received today (cash)?\nFor another date or method, use the Payments tab → itemized bill.')) return;
+  const { error } = await sb.rpc('record_itemized_payment', { p_utility_ids:[id], p_received_date:manilaToday(), p_method:'cash' });
+  if(error) return alert('Could not record the payment: ' + error.message);
+  await billLoad();
+}
+
+// ---------- send to renter, together with rent that falls due at about the same time ----------
+let billSendItems = [], billSendCtx = null;
+async function billSend(id){
+  const b = billRows.find(r=>r.id === id); if(!b) return;
+  const u = billUnits.find(x=>x.unit_id === b.unit_id);
+  if(!u){ alert('This unit has no active contract to send to.'); return; }
+  const { data: cus } = await sb.from('contract_units').select('unit_id').eq('contract_id', u.contract_id);
+  const unitIds = (cus||[]).map(x=>x.unit_id);
+  const [{ data: bills }, { data: rents }] = await Promise.all([
+    sb.from('utilities').select('*').in('unit_id', unitIds).eq('status','unpaid').order('billing_month'),
+    sb.from('rent_payments').select('*').eq('contract_id', u.contract_id).in('status',['pending','partial','overdue']).order('due_date').limit(6)
+  ]);
+  const ref = b.due_date && b.due_date > manilaToday() ? b.due_date : manilaToday(), near = addDaysISO(ref, 10);
+  billSendItems = [
+    ...(rents||[]).map(r=>({ kind:'rent', amount:Number(r.amount_due)-Number(r.amount_paid), due:r.due_date,
+      label:`Rent ${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}`, checked: r.due_date <= near })),
+    ...(bills||[]).map(x=>({ kind:'bill', amount:Number(x.amount), due:x.due_date, label:billDesc(x)+' · '+billMonthLbl(x.billing_month), checked:true }))
+  ].filter(i=>i.amount > 0.004);
+  billSendCtx = { contract_id:u.contract_id, renter_id:u.renter_id, units:u.building+' · '+u.unit };
+  document.getElementById('billNotifyPanel').innerHTML = '';
+  document.getElementById('billSendPanel').innerHTML = `<div class="card" style="border-color:var(--accent);">
+    <p class="section-title">Send to ${bulkEsc(u.renter)} — ${bulkEsc(billSendCtx.units)}</p>
+    <p class="muted">Rent due on or before ${fmtDate(near)} is ticked so it goes in the same message. Untick anything you don't want to include.</p>
+    <table><tbody>${billSendItems.map((i,k)=>`<tr>
+      <td><input type="checkbox" id="bsItem${k}" ${i.checked?'checked':''} onchange="billSendTotal()" style="width:auto;"></td>
+      <td>${bulkEsc(i.label)}<div class="muted" style="font-size:12px;">${i.due?'due '+fmtDate(i.due):''}</div></td>
+      <td>${fmtMoney(i.amount)}</td></tr>`).join('')}</tbody></table>
+    <p style="font-size:18px;font-weight:700;margin:10px 0;">Total: <span id="bsTotal"></span></p>
+    <button class="btn" onclick="billSendGo()">Send message</button>
+    <button class="btn secondary" onclick="document.getElementById('billSendPanel').innerHTML=''">Cancel</button>
+  </div>`;
+  billSendTotal();
+  document.getElementById('billSendPanel').scrollIntoView({ behavior:'smooth' });
+}
+function billSendTotal(){
+  let t = 0; billSendItems.forEach((i,k)=>{ if(document.getElementById('bsItem'+k).checked) t += i.amount; });
+  document.getElementById('bsTotal').textContent = fmtMoney(t);
+}
+async function billSendGo(){
+  const sel = billSendItems.filter((i,k)=>document.getElementById('bsItem'+k).checked);
+  if(!sel.length) return alert('Tick at least one item.');
+  const { data: r } = await sb.from('renters').select('name, email, contact_number').eq('id', billSendCtx.renter_id).single();
+  const total = sel.reduce((s,i)=>s+i.amount, 0);
+  const payText = await buildPaymentInstructionsText();
+  const lines = sel.map(i=>`- ${i.label}: ${fmtMoney(i.amount)}${i.due?' (due '+fmtDate(i.due)+')':''}`).join('\n');
+  const message = `Hi ${r?.name||''}, here is your bill for ${billSendCtx.units}:\n\n${lines}\n\nTotal: ${fmtMoney(total)}${payText}`;
+  const st = await trySendEmail(r?.email, 'Your rent and utility bill', message);
+  showNotifyPanel(r?.name||'', r?.email, r?.contact_number, message, 'billNotifyPanel', 'Your rent and utility bill', st);
+  document.getElementById('billNotifyPanel').scrollIntoView({ behavior:'smooth' });
+}
+</script>
+
 </body>
 </html>
