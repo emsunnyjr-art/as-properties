@@ -2718,6 +2718,24 @@ async function showRenterDetailInner(renterId, fromPop){
   const { data: myProofs } = await sb.from('payment_proofs').select('id').eq('renter_id', renterId).eq('status','pending');
   const lab = x => x.rent_period === 'monthly' ? new Date(x.period_start+'T00:00:00').toLocaleDateString(undefined,{month:'long', year:'numeric'}) : (x.period_start === x.period_end ? fmtDate(x.period_start) : `${fmtDate(x.period_start)} – ${fmtDate(x.period_end)}`);
   const sched = [...dueRows.map(x=>({x, t:'<span class="tag bad">Overdue</span>'})), ...nextRows.map(x=>({x, t:'<span class="tag mute">Upcoming</span>'}))];
+  // What is owed, in one line: "11 months · ₱107,500 total (May 2025 – Oct 2026)"
+  const owedBals = (bals||[]).filter(b=>Number(b.balance) > 0);
+  const owedMonths = dueRows.length;
+  const owedRange = owedMonths ? (()=>{ const ps = dueRows.map(x=>x.period_start).sort(); const f = fmtMonthYear(ps[0]), t = fmtMonthYear(ps[ps.length-1]); return f===t ? f : `${f} – ${t}`; })() : '';
+  const owedRp = [...new Set(dueRows.map(x=>x.rent_period))];
+  const owedUnit = owedRp.length===1 ? periodUnitLabel(owedRp[0], owedMonths) : (owedMonths===1 ? 'period' : 'periods');
+  const owedInfo = { months: owedMonths, unit: owedUnit, total: totalOwed, range: owedRange,
+    lines: owedBals.map(b=>({ units: (byContract[b.contract_id]?.unit_names||[]).join(', ') || 'Contract', n: Number(b.periods_unpaid)||0, rp: b.rent_period, bal: Number(b.balance), range: balanceRangeText(b) })) };
+  // Paid months, newest first — shown folded under a tap so long histories don't push the unpaid ones away.
+  let paidRows = [];
+  try{
+    const cids = contractRows.map(c=>c.contract_id);
+    if(cids.length){
+      const { data: pr } = await sb.from('rent_payments').select('contract_id, period_start, period_end, due_date, amount_due, amount_paid, status')
+        .in('contract_id', cids).in('status', ['paid','waived']).lte('due_date', today).order('period_start', { ascending:false }).limit(240);
+      paidRows = (pr||[]).map(x=>({ ...x, rent_period: byContract[x.contract_id]?.rent_period || 'monthly', unit_names: (byContract[x.contract_id]?.unit_names||[]).join(', ') }));
+    }
+  }catch(e){ paidRows = []; }
   const mainBtn = dueRows.length ? `<button class="btn big" style="width:100%;" onclick="openRenterPay('${dueRows[0].contract_id}')">Record payment</button>`
                 : (myProofs||[]).length ? `<button class="btn big" style="width:100%;" onclick="openProofReview('${myProofs[0].id}')">Review proof</button>` : '';
   const activeIds = [...new Set(activeContracts.map(c=>c.contract_id))];
@@ -2734,7 +2752,7 @@ async function showRenterDetailInner(renterId, fromPop){
         // a plan that is fully paid closes itself
         for(const pl of list){ if(pl.status==='active' && pl.finished){ pl.status = 'completed'; sb.from('payment_plans').update({ status:'completed' }).eq('id', pl.id).then(()=>{}); } }
       }
-      planHtml = planCardHtml(r, list, itemsBy, totalOwed);
+      planHtml = planCardHtml(r, list, itemsBy, totalOwed, owedInfo);
     }
   }catch(e){}
   const panel = document.getElementById('renterDetailPanel');
@@ -2760,7 +2778,11 @@ async function showRenterDetailInner(renterId, fromPop){
     ${planHtml}
     <div class="card">
       <p class="section-title">Schedule</p>
+      ${owedMonths ? `<div style="font-size:15px;margin:-4px 0 6px;"><strong style="color:var(--bad);">${owedMonths} ${owedUnit} unpaid · ${fmtMoney(totalOwed)}</strong> <span class="muted">${bulkEsc(owedRange)}</span></div>` : ''}
       ${sched.map(({x,t})=>`<div class="schedRow"><div><div>${bulkEsc(lab(x))}</div><div class="muted">${bulkEsc(x.unit_names||'')}${x.due_date ? ' · due '+fmtDate(x.due_date) : ''}</div></div><div style="text-align:right;"><div style="font-weight:700;">${fmtMoney(x.balance)}</div>${t}</div></div>`).join('') || '<p class="muted">Nothing due or coming up.</p>'}
+      ${paidRows.length ? `<details class="rdDetails" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;"><summary class="muted" style="font-weight:600;font-size:15px;">✓ ${paidRows.length}${paidRows.length>=240?'+':''} paid ${(()=>{ const rp = [...new Set(paidRows.map(x=>x.rent_period))]; return rp.length===1 ? periodUnitLabel(rp[0], paidRows.length) : (paidRows.length===1?'period':'periods'); })()} — tap to show</summary>
+        ${paidRows.map(x=>`<div class="schedRow"><div><div>${bulkEsc(lab(x))}</div><div class="muted">${bulkEsc(x.unit_names||'')}</div></div><div style="text-align:right;"><div style="font-weight:700;">${fmtMoney(x.status==='waived' ? 0 : x.amount_paid)}</div>${x.status==='waived' ? '<span class="tag mute">Waived</span>' : '<span class="tag good">Paid</span>'}</div></div>`).join('')}
+      </details>` : ''}
     </div>
     <details class="card rdDetails"><summary>Details</summary>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;">
@@ -2863,7 +2885,16 @@ function planTermsDefault(total, unitNames){
   ].join('\n\n');
 }
 
-function planCardHtml(r, plans, itemsBy, totalOwed){
+function planOwedHtml(o, withLines){
+  if(!o || !(o.total > 0)) return '';
+  const head = `<div style="background:rgba(239,91,91,.10);border:1px solid rgba(239,91,91,.35);border-radius:10px;padding:10px 12px;margin:6px 0 10px;">
+    <div class="muted" style="font-size:13px;">Owed now</div>
+    <div style="font-size:22px;font-weight:800;color:var(--bad);">${o.months ? `${o.months} ${o.unit}, ` : ''}${fmtMoney(o.total)} total</div>
+    ${o.range ? `<div class="muted">${bulkEsc(o.range)}</div>` : ''}`;
+  const lines = withLines && o.lines.length > 1 ? o.lines.map(l=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:14px;margin-top:6px;padding-top:6px;border-top:1px solid rgba(239,91,91,.25);"><span>${bulkEsc(l.units)} <span class="muted">· ${l.n} ${periodUnitLabel(l.rp, l.n)}${l.range ? ' · '+bulkEsc(l.range) : ''}</span></span><strong>${fmtMoney(l.bal)}</strong></div>`).join('') : '';
+  return head + lines + '</div>';
+}
+function planCardHtml(r, plans, itemsBy, totalOwed, owedInfo){
   const open = plans.filter(p=>p.status==='draft' || p.status==='active');
   const done = plans.filter(p=>p.status==='completed')[0];
   const itemTag = s => s==='paid' ? '<span class="tag good">Paid</span>' : s==='partial' ? '<span class="tag warn">Part paid</span>' : s==='late' ? '<span class="tag bad">Late</span>' : '<span class="tag mute">Upcoming</span>';
@@ -2880,7 +2911,11 @@ function planCardHtml(r, plans, itemsBy, totalOwed){
       <div class="planBar"><i style="width:${pct}%"></i></div>
       <div style="font-size:15px;"><strong>${fmtMoney(p.paid_total)}</strong> paid of ${fmtMoney(p.total_amount)} · <strong>${fmtMoney(p.remaining)}</strong> left</div>
       <div class="muted">${p.next_due_date ? `Next: ${fmtMoney(p.next_amount)} on ${fmtDate(p.next_due_date)}` : 'All installments paid'} · ${bulkEsc(PLAN_FREQ[p.frequency]||'')}</div>
-      <div style="margin-top:8px;">${its.map(x=>`<div class="schedRow"><div><div>${fmtDate(x.due_date)}</div><div class="muted">Installment ${x.seq}</div></div><div style="text-align:right;"><div style="font-weight:700;">${fmtMoney(x.amount)}</div>${itemTag(x.item_status)}${x.item_status==='partial' ? `<div class="muted">${fmtMoney(x.paid)} paid</div>` : ''}</div></div>`).join('')}</div>
+      <div class="muted">${its.length} installment${its.length===1?'':'s'} splitting ${fmtMoney(p.total_amount)}${owedInfo && owedInfo.total > Number(p.total_amount) + 0.004 ? ` · renter owes ${fmtMoney(owedInfo.total)} in all` : ''}</div>
+      ${(()=>{ const row = x=>`<div class="schedRow"><div><div>${fmtDate(x.due_date)}</div><div class="muted">Installment ${x.seq}</div></div><div style="text-align:right;"><div style="font-weight:700;">${fmtMoney(x.amount)}</div>${itemTag(x.item_status)}${x.item_status==='partial' ? `<div class="muted">${fmtMoney(x.paid)} paid</div>` : ''}</div></div>`;
+        const unpaid = its.filter(x=>x.item_status!=='paid'), paid = its.filter(x=>x.item_status==='paid');
+        return `<div style="margin-top:8px;">${unpaid.map(row).join('')}</div>` +
+          (paid.length ? `<details class="rdDetails" style="margin-top:6px;"><summary class="muted" style="font-weight:600;font-size:15px;">✓ ${paid.length} paid installment${paid.length===1?'':'s'} — tap to show</summary>${paid.map(row).join('')}</details>` : ''); })()}
       <p class="muted" style="margin:8px 0 0;">Payments are recorded the usual way (Record payment). Any rent payment on this contract from ${fmtDate(p.counts_from)} on counts toward the plan, oldest installment first.</p>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
         ${unsigned ? `<button class="btn big" onclick="sendPlanForSignature('${p.id}')">Send for signature</button>` : ''}
@@ -2896,7 +2931,8 @@ function planCardHtml(r, plans, itemsBy, totalOwed){
   });
   if(!open.length && totalOwed > 0){
     html += `<div class="card"><p class="section-title">Payment plan</p>
-      <p class="muted" style="margin:4px 0 10px;">Set up installments for what ${bulkEsc(r.name)} owes. They sign it from a link, and the app tracks every installment.</p>
+      ${planOwedHtml(owedInfo, true)}
+      <p class="muted" style="margin:4px 0 10px;">Set up installments for what ${bulkEsc(r.name)} owes. They sign it from a link, and the app tracks every installment.${owedInfo && owedInfo.lines.length > 1 ? ' A plan covers one contract at a time — set up one per contract.' : ''}</p>
       <button class="btn big" style="width:100%;" onclick="openPlanForm('${r.id}')">Set up payment plan</button></div>`;
   }
   if(!open.length && done){
@@ -2913,13 +2949,13 @@ let planDraft = null;
 async function openPlanForm(renterId, planId){
   const [{ data: r }, { data: bals }, { data: ru }] = await Promise.all([
     sb.from('renters').select('id, name').eq('id', renterId).single(),
-    sb.from('v_contract_balance').select('contract_id, balance, status, recover_dues').eq('renter_id', renterId),
+    sb.from('v_contract_balance').select('contract_id, balance, status, recover_dues, periods_unpaid, rent_period, first_unpaid_period, last_unpaid_period').eq('renter_id', renterId),
     sb.from('v_renter_units').select('contract_id, unit_name').eq('renter_id', renterId)
   ]);
   if(!r) return;
   const unitsOf = {}; (ru||[]).forEach(u=>{ (unitsOf[u.contract_id] ||= []).push((u.unit_name||'').trim()); });
   const cons = (bals||[]).filter(b=>Number(b.balance)>0 && (b.status==='active' || b.recover_dues))
-    .map(b=>({ id:b.contract_id, balance:Number(b.balance), units:[...new Set(unitsOf[b.contract_id]||[])].join(', ') }))
+    .map(b=>({ id:b.contract_id, balance:Number(b.balance), n:Number(b.periods_unpaid)||0, rp:b.rent_period, range:balanceRangeText(b), units:[...new Set(unitsOf[b.contract_id]||[])].join(', ') }))
     .sort((a,b)=>b.balance-a.balance);
   const today = manilaToday();
   if(planId){
@@ -2947,6 +2983,14 @@ function renderPlanForm(){
   ov.innerHTML = `<div style="max-width:620px;margin:0 auto;">
     <div class="card">
       <p class="section-title" style="margin-top:0;">${d.planId ? 'Edit payment plan' : 'Payment plan'} — ${bulkEsc(d.renterName)}</p>
+      ${(()=>{ const c = curCon; if(!c) return ''; const all = d.cons.reduce((s,x)=>s+x.balance,0), allN = d.cons.reduce((s,x)=>s+(x.n||0),0);
+        return `<div style="background:rgba(239,91,91,.10);border:1px solid rgba(239,91,91,.35);border-radius:10px;padding:10px 12px;margin:8px 0 12px;">
+          <div class="muted" style="font-size:13px;">Owed on ${bulkEsc(c.units||'this contract')}</div>
+          <div style="font-size:22px;font-weight:800;color:var(--bad);">${c.n ? `${c.n} ${periodUnitLabel(c.rp, c.n)}, ` : ''}${fmtMoney(c.balance)} total</div>
+          ${c.range ? `<div class="muted">${bulkEsc(c.range)}</div>` : ''}
+          ${d.cons.length > 1 ? `<div class="muted" style="margin-top:4px;">All contracts: ${allN} ${d.cons.every(x=>x.rp===c.rp) ? periodUnitLabel(c.rp, allN) : 'periods'}, ${fmtMoney(all)}. A plan covers one contract — pick it below.</div>` : ''}
+          <div id="planCoverNote" style="margin-top:6px;font-size:14px;"></div>
+        </div>`; })()}
       ${d.cons.length > 1 ? `<label>Contract</label><select onchange="planSet('contractId', this.value)">${d.cons.map(c=>`<option value="${c.id}" ${c.id===d.contractId?'selected':''}>${bulkEsc(c.units||'Contract')} — owes ${fmtMoney(c.balance)}</option>`).join('')}</select>` : `<div class="muted">${bulkEsc(curCon?.units||'')}${curCon ? ' · owes '+fmtMoney(curCon.balance) : ''}</div>`}
       <label style="margin-top:12px;">Amount the plan covers</label>
       <input type="number" inputmode="decimal" step="0.01" value="${d.total}" oninput="planSet('total', this.value)">
@@ -2974,6 +3018,10 @@ function renderPlanForm(){
 }
 function planRenderSched(){
   const d = planDraft, box = document.getElementById('planSchedBox'); if(!box) return;
+  { const note = document.getElementById('planCoverNote'), c = d.cons.find(x=>x.id===d.contractId);
+    if(note && c) note.innerHTML = Math.abs(Number(d.total) - c.balance) > 0.004
+      ? `This plan covers <strong>${fmtMoney(d.total)}</strong> of it. <a href="#" class="seeAll" onclick="planSet('total', ${c.balance});renderPlanForm();return false;">Use full ${fmtMoney(c.balance)}</a>`
+      : `This plan splits the full ${fmtMoney(c.balance)}.`; }
   const sum = Math.round(d.items.reduce((s,x)=>s+(Number(x.amount)||0),0)*100)/100;
   const ok = Math.abs(sum - d.total) < 0.01;
   box.innerHTML = `<p class="section-title" style="margin:0 0 6px;">Schedule (${d.items.length} installment${d.items.length===1?'':'s'})</p>` +
@@ -6064,7 +6112,7 @@ function rentRollRender(){
   rows.forEach(r=>rrData.months.forEach(m=>{ const x = r.cells[m]; if(!x) return; tot[m].billed += x.billed; tot[m].paid += x.paid; if(x.k==='o'||(x.k==='h' && (by[r.cid][m]||[]).some(i=>i.due_date<=today))){ overCells++; overAmt += Math.max(0, x.billed - x.paid); } }));
   const head = rrData.months.map(m=>{ const d = new Date(m+'-01T00:00:00'); return `<th class="rrM">${d.toLocaleDateString('en-PH',{month:'short'})}<br><span>${String(d.getFullYear()).slice(2)}</span></th>`; }).join('');
   const body = rows.map(r=>`<tr>
-      <td class="rrName"><a href="#" onclick="showRenterDetail('${r.c.renter_id}');return false;"><strong>${xEsc(r.unitTxt)}</strong></a><br><span class="muted">${xEsc(r.renter)}${r.c.status && r.c.status!=='active' ? ' · '+xEsc(r.c.status) : ''}</span></td>
+      <td class="rrName"><a href="#" onclick="switchToTab('renters'); showRenterDetail('${r.c.renter_id}');return false;"><strong>${xEsc(r.unitTxt)}</strong></a><br><span class="muted">${xEsc(r.renter)}${r.c.status && r.c.status!=='active' ? ' · '+xEsc(r.c.status) : ''}</span></td>
       ${rrData.months.map(m=>{ const x = r.cells[m]; if(!x) return '<td class="rrC"></td>';
         const tip = `${xMon(m+'-01')}: billed ${xMoney(x.billed)}, paid ${xMoney(x.paid)}`;
         return `<td class="rrC"><button class="rrK rr-${x.k}" title="${xEsc(tip)}" onclick="openPaymentsForContract('${r.cid}')">${sym[x.k]}</button></td>`; }).join('')}
