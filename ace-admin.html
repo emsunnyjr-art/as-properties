@@ -5855,7 +5855,7 @@ async function loadRemindCard(){
     const owed = Number(r.amount_due) - Number(r.amount_paid||0);
     if(!(owed > 0.004)) return;
     const g = groups[r.contract_id] || (groups[r.contract_id] = { contract_id:r.contract_id, name:r.renter_name, unit:r.unit_name, building:r.building_name, items:[], total:0, worst:-9999, kinds:new Set() });
-    g.items.push({ type:r.reminder_type, due:r.target_date, off:Number(r.days_offset), owed });
+    g.rids = (g.rids||[]).concat(r.reminder_id); g.items.push({ type:r.reminder_type, due:r.target_date, off:Number(r.days_offset), owed });
     g.total += owed; g.worst = Math.max(g.worst, Number(r.days_offset)); g.kinds.add(r.reminder_type);
   });
   remindRows = Object.values(groups).sort((a,b)=>b.worst - a.worst);
@@ -5865,6 +5865,15 @@ async function loadRemindCard(){
     const m = {}; (cs||[]).forEach(c=>m[c.id] = c.renters || {});
     remindRows.forEach(g=>{ g.email = m[g.contract_id]?.email || ''; g.phone = m[g.contract_id]?.contact_number || ''; });
   }
+  try{
+    const rids = remindRows.flatMap(g=>g.rids||[]);
+    const autoSet = new Set();
+    for(let i=0;i<rids.length;i+=150){
+      const { data: lg } = await sb.from('reminders_log').select('id').in('id', rids.slice(i,i+150)).eq('last_auto_sent_date', manilaToday());
+      (lg||[]).forEach(x=>autoSet.add(x.id));
+    }
+    remindRows.forEach(g=>{ g.autoToday = (g.rids||[]).some(id=>autoSet.has(id)); });
+  }catch(_){}
   remindRender();
 }
 function remindRowHtml(g, sent){
@@ -5872,7 +5881,7 @@ function remindRowHtml(g, sent){
   const status = g.worst > 0 ? `<span style="color:var(--bad);">${g.worst} day${g.worst===1?'':'s'} late</span>` : (g.worst === 0 ? '<b>due today</b>' : `due in ${-g.worst} day${g.worst===-1?'':'s'}`);
   return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid rgba(255,255,255,.08);${s?'opacity:.5;':''}">
     <div style="min-width:0;"><b>${bulkEsc(g.name)}</b> <span class="muted">${bulkEsc(g.building||'')} ${bulkEsc(g.unit||'')}</span><br>
-      <span style="font-size:13px;">${fmtMoney(g.total)} · ${g.items.length} item${g.items.length===1?'':'s'} · ${status}</span></div>
+      <span style="font-size:13px;">${fmtMoney(g.total)} · ${g.items.length} item${g.items.length===1?'':'s'} · ${status}${g.autoToday?' · <span class="muted">SMS/email already sent this morning</span>':''}</span></div>
     <div style="display:flex;gap:6px;align-items:center;">
       <button class="btn small" onclick="remindOpen('${g.contract_id}')">Send</button>
       <label style="display:flex;align-items:center;gap:4px;font-size:13px;margin:0;"><input type="checkbox" style="width:auto;" ${s?'checked':''} onchange="remindTick('${g.contract_id}', this.checked)"> Sent</label>
@@ -5890,19 +5899,46 @@ function remindRender(){
   el.innerHTML = `<div class="card" style="border-color:var(--accent);">
     <p class="section-title" style="margin-bottom:2px;">Collect this week <span class="muted" style="font-weight:400;font-size:13px;">— 3 days back to 3 days ahead · ${win.length} renter${win.length===1?'':'s'} · ${fmtMoney(tot)} · ${done} sent by you today</span></p>
     <p class="muted" style="margin-top:0;">SMS and email go out automatically at 6 AM on the day 3 before, due day, 1 and 3 days late, then weekly. For Viber or Messenger: tap Send, pick the app, then tick "Sent".</p>
+    ${win.length ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0;"><button class="btn" onclick="remindSendAll('win')">📤 Send all (${win.length}) by SMS + email</button><label style="font-size:13px;margin:0;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="rsaSms" checked style="width:auto;"> SMS</label><label style="font-size:13px;margin:0;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="rsaEmail" checked style="width:auto;"> Email</label></div>` : ''}
     ${win.map(g=>remindRowHtml(g, sent)).join('') || '<p class="muted">Nobody in this window.</p>'}
-    ${old.length ? `<p class="section-title" style="margin:14px 0 2px;font-size:15px;color:var(--bad);">Overdue more than 3 days (${old.length})</p>${old.map(g=>remindRowHtml(g, sent)).join('')}` : ''}
+    ${old.length ? `<p class="section-title" style="margin:14px 0 2px;font-size:15px;color:var(--bad);">Overdue more than 3 days (${old.length}) <button class="btn secondary small" style="margin-left:8px;" onclick="remindSendAll('old')">Send all</button></p>${old.map(g=>remindRowHtml(g, sent)).join('')}` : ''}
   </div>`;
 }
 function remindTick(cid, on){ const s = remindSentSet(); if(on) s.add(cid); else s.delete(cid); remindSentSave(s); remindRender(); }
-async function remindOpen(cid){
-  const g = remindRows.find(x=>x.contract_id === cid); if(!g) return;
-  const payText = await buildPaymentInstructionsText();
-  const lines = g.items.sort((a,b)=>a.due<b.due?-1:1).map(i=>{
+function remindMessage(g, payText){
+  const lines = g.items.slice().sort((a,b)=>a.due<b.due?-1:1).map(i=>{
     const when = i.off > 0 ? `was due ${fmtDate(i.due)}, ${i.off} day${i.off===1?'':'s'} late` : (i.off === 0 ? `due today` : `due ${fmtDate(i.due)}`);
     return `- ${i.type==='plan_installment'?'Payment plan installment':'Rent'} ${fmtMoney(i.owed)} (${when})`;
   }).join('\n');
-  const message = `Hi ${g.name}, friendly reminder from Ace Properties for ${g.unit||'your unit'}:\n\n${lines}\n\nTotal: ${fmtMoney(g.total)}${payText}`;
+  return `Hi ${g.name}, friendly reminder from Ace Properties for ${g.unit||'your unit'}:\n\n${lines}\n\nTotal: ${fmtMoney(g.total)}${payText}`;
+}
+async function remindSendAll(which){
+  const sent = remindSentSet();
+  const rows = remindRows.filter(g=>g.items.some(i=>i.off >= -3));
+  const win = rows.filter(g=>g.items.some(i=>i.off >= -3 && i.off <= 3));
+  const list = which === 'win' ? win : rows.filter(g=>!win.includes(g));
+  const sms = which === 'win' ? document.getElementById('rsaSms').checked : true;
+  const email = which === 'win' ? document.getElementById('rsaEmail').checked : true;
+  if(!sms && !email) return alert('Tick SMS and/or Email.');
+  const todo = list.filter(g=>!sent.has(g.contract_id) && !g.autoToday);
+  const skipped = list.length - todo.length;
+  if(!todo.length) return alert('Nobody to send: everyone in this list is already ticked as sent or got the automatic message this morning.');
+  const noContact = todo.filter(g=>!(email && g.email) && !(sms && g.phone)).map(g=>g.name);
+  if(!confirm(`Send ${[sms?'SMS':'',email?'email':''].filter(Boolean).join(' + ')} to ${todo.length} renter${todo.length===1?'':'s'}?` +
+      (skipped ? `\n\n${skipped} skipped (already ticked "Sent" or got the automatic message this morning).` : '') +
+      (noContact.length ? `\n\nNo mobile/email on file, so nothing goes to: ${noContact.join(', ')}.` : '') +
+      `\n\nMessages go out within a few minutes. Viber/Messenger stay manual.`)) return;
+  const payText = await buildPaymentInstructionsText();
+  const msgs = {}; todo.forEach(g=>{ msgs[g.contract_id] = remindMessage(g, payText); });
+  const { data, error } = await sb.rpc('queue_reminder_messages', { p_messages: msgs, p_sms: sms, p_email: email });
+  if(error) return alert('Nothing was sent. ' + error.message + (/queue_reminder_messages/.test(error.message) ? ' (run ace-feature-update-43.sql first)' : ''));
+  todo.forEach(g=>sent.add(g.contract_id)); remindSentSave(sent); remindRender();
+  alert(`Queued: ${data.sms} SMS and ${data.email} email${data.no_contact ? ` · ${data.no_contact} renter(s) had no number/email` : ''}.\nThey are sent at about 15 per minute.`);
+}
+async function remindOpen(cid){
+  const g = remindRows.find(x=>x.contract_id === cid); if(!g) return;
+  const payText = await buildPaymentInstructionsText();
+  const message = remindMessage(g, payText);
   showNotifyPanel(g.name, g.email, g.phone, message, 'remindNotify', 'Ace Properties — payment reminder');
   document.getElementById('remindNotify').insertAdjacentHTML('beforeend', `<div style="margin:-6px 0 12px;"><button class="btn secondary small" onclick="remindTick('${cid}', true);document.getElementById('remindNotify').innerHTML=''">✔ Mark as sent</button></div>`);
   document.getElementById('remindNotify').scrollIntoView({ behavior:'smooth' });
