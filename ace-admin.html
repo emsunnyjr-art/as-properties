@@ -114,20 +114,6 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
   }
 #toTopBtn{position:fixed;right:16px;bottom:16px;width:44px;height:44px;border-radius:50%;border:0;background:var(--accent);color:#04121e;font-size:20px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);display:none;z-index:50;}
 #toTopBtn.show{display:block;}
-  /* update 41 */
-  .rrWrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:10px;}
-  .rrTable{border-collapse:separate;border-spacing:0;font-size:13px;min-width:720px;}
-  .rrTable th,.rrTable td{padding:4px 3px;border-bottom:1px solid var(--border);text-transform:none;}
-  .rrTable .rrName{position:sticky;left:0;background:var(--panel);z-index:2;min-width:150px;max-width:190px;padding:6px 8px;border-right:1px solid var(--border);}
-  .rrTable .rrName a{color:var(--text);text-decoration:none;}
-  .rrTable th.rrM{text-align:center;font-size:11px;line-height:1.2;} .rrTable th.rrM span{opacity:.6;}
-  .rrC{text-align:center;}
-  .rrK{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:7px;border:0;font-weight:800;font-size:14px;cursor:pointer;padding:0;}
-  .rr-p{background:rgba(62,207,142,.22);color:var(--good);} .rr-h{background:rgba(242,184,75,.25);color:var(--warn);}
-  .rr-o{background:rgba(239,91,91,.25);color:var(--bad);} .rr-f{background:var(--panel2);color:var(--muted);} .rr-w{background:var(--panel2);color:var(--muted);opacity:.7;}
-  .rrFoot td{border-top:2px solid var(--border);}
-  .rrLegend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:8px;} .rrLegend .rrK{width:22px;height:22px;font-size:12px;cursor:default;margin-right:4px;}
-  .noiT td.n,.noiT th.n{text-align:right;white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -176,7 +162,6 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
   <button data-tab="contracts">Contracts</button>
   <button data-tab="payments">Payments</button>
   <button data-tab="bills">Bills</button>
-  <button data-tab="expenses">Expenses</button>
   <button data-tab="reports">Reports</button>
   <button data-tab="alerts">Alerts</button>
 </nav>
@@ -221,18 +206,6 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
   <section id="tab-reports" class="hidden">
     <p class="section-title" style="font-size:18px;">Reports</p>
     <div id="reportsBox">
-    <div class="card" id="rrCard">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;">
-        <p class="section-title" style="margin:0;">Rent roll — 12 months</p>
-        <button class="btn secondary small" onclick="rentRollLoad()">↻ Refresh</button>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <div><label>Building</label><select id="rrBld" onchange="rentRollRender()"><option value="">All buildings</option></select></div>
-        <div><label>12 months ending</label><input id="rrEnd" type="month" onchange="rentRollLoad()"></div>
-        <div><label>Search</label><input id="rrSearch" placeholder="unit or renter" oninput="rentRollRender()"></div>
-      </div>
-      <div id="rrBody"><p class="muted">Open this tab to load.</p></div>
-    </div>
     <div class="card clickStat" id="rentRollCard" style="display:none;" onclick="switchToTab('dashboard');showStatList('occupied')"></div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;">
@@ -365,52 +338,6 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
     </div>
   </section>
 
-  <!-- ============ EXPENSES & NOI ============ -->
-  <section id="tab-expenses" class="hidden">
-    <div class="card">
-      <p class="section-title">What each building really earns (NOI)</p>
-      <p class="muted" style="margin-top:-6px;">Collected rent and bills minus the expenses you log below. NOI = net operating income, before loans and income tax.</p>
-      <div class="row">
-        <div><label>Period</label><select id="noiPeriod" onchange="noiLoad()"></select></div>
-        <div><label>Building</label><select id="noiBld" onchange="noiLoad()"><option value="">All buildings</option></select></div>
-        <div><label>Count rent by</label><select id="noiBasis" onchange="noiLoad()"><option value="for">Month it is for</option><option value="received">Date money was received</option></select></div>
-      </div>
-      <div id="noiBody"><p class="muted">Loading…</p></div>
-    </div>
-
-    <div class="card" id="exFormCard">
-      <p class="section-title" id="exFormTitle">Add an expense</p>
-      <div class="row">
-        <div><label>Building</label><select id="exBld"><option value="">General / not per building</option></select></div>
-        <div><label>Type</label><select id="exCat"></select></div>
-        <div><label>Date paid</label><input id="exDate" type="date"></div>
-        <div><label>Amount (₱)</label><input id="exAmount" type="number" step="0.01" inputmode="decimal"></div>
-      </div>
-      <div class="row">
-        <div><label>Paid to (optional)</label><input id="exPayee" placeholder="e.g. Meralco, plumber Jun, Municipal Treasurer"></div>
-        <div><label>Note (optional)</label><input id="exDesc" placeholder="e.g. leaking pipe Unit 3, RPT 2026 Q4"></div>
-      </div>
-      <label>Receipt photo (optional)</label>
-      <input id="exFile" type="file" accept="image/*,application/pdf">
-      <div class="muted" id="exFileCur"></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
-        <button class="btn" id="exSaveBtn" onclick="expSave()">Save expense</button>
-        <button class="btn secondary" onclick="expFormReset()">Clear</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <p class="section-title">Expenses</p>
-      <div class="row">
-        <div><label>Period</label><select id="exfPeriod" onchange="expLoadList()"></select></div>
-        <div><label>Building</label><select id="exfBld" onchange="expLoadList()"><option value="">All buildings</option></select></div>
-        <div><label>Type</label><select id="exfCat" onchange="expLoadList()"></select></div>
-      </div>
-      <p class="muted" id="exSummary" style="margin:6px 0;"></p>
-      <div id="exList"></div>
-    </div>
-  </section>
-
   <!-- ============ MORE (phone) ============ -->
   <section id="tab-more" class="hidden">
     <p class="section-title" style="font-size:18px;">More</p>
@@ -418,8 +345,7 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
       <button onclick="switchToTab('properties')"><span>Properties</span><small>Buildings, units, floor plans</small></button>
       <button onclick="switchToTab('bills')"><span>Bills</span><small>Electric, water, internet, damages</small></button>
       <button onclick="switchToTab('contracts')"><span>Contracts</span><small>New contract, renew, cancel</small></button>
-      <button onclick="switchToTab('expenses')"><span>Expenses &amp; NOI</span><small>Repairs, taxes, dues — what each building really earns</small></button>
-      <button onclick="switchToTab('reports')"><span>Reports</span><small>Rent roll, charts, unpaid table, coming up</small></button>
+      <button onclick="switchToTab('reports')"><span>Reports</span><small>Charts, unpaid table, coming up</small></button>
       <button onclick="switchToTab('alerts')"><span>Alerts</span><small>Your email and mobile for payment proofs</small></button>
       <button onclick="showChangePassword();switchToTab('dashboard')"><span>Change password</span></button>
       <button onclick="logoutApp()"><span>Log out</span></button>
@@ -676,6 +602,8 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
 
   <!-- ============ PAYMENTS ============ -->
   <section id="tab-payments" class="hidden">
+    <div id="remindCard"></div>
+    <div id="remindNotify"></div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
         <p class="section-title" style="margin:0;">Payment methods (GCash / Maya / Bank)</p>
@@ -753,7 +681,6 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;">
         <button class="btn small" onclick="openPaidHistory({contractId:document.getElementById('payContractSelect').value})">📜 Show history — this contract (undo payments)</button>
         <button class="btn secondary small" onclick="openPaidHistory({contractId:document.getElementById('payContractSelect').value, wholeRenter:true})">📜 Show history — all this renter's units</button>
-        <button class="btn secondary small" onclick="const v=document.getElementById('payContractSelect').value; if(!v) return alert('Pick a contract first.'); openStatement({contractId:v})">📄 Statement of account</button>
       </div>
       <div id="payForBanner"></div>
     </div>
@@ -948,9 +875,6 @@ async function refreshNow(){
   try{
     await Promise.all([loadDashboard(), loadPropertyDropdowns(), loadUnitsTable(), loadRenters(), loadContractCascadingData(),
       loadContractsTable(), loadPayContractSelect(), loadPaymentMethods()]);
-    if(typeof xEnsureRefs === 'function'){ xRefs = null;
-      if(curTab === 'reports' && rrLoaded) await rentRollLoad(); else rrLoaded = false;
-      if(curTab === 'expenses') await expensesOpen(); }
   }catch(e){ ok = false; console.error('refresh failed', e); }
   btn.disabled = false;
   btn.textContent = ok ? 'Updated ' + new Date().toLocaleTimeString('en-PH',{timeZone:'Asia/Manila', hour:'numeric', minute:'2-digit'}) : 'Refresh failed, tap to retry';
@@ -1370,8 +1294,7 @@ function switchToTab(name, fromPop){
   document.querySelectorAll('main > section').forEach(s=>s.classList.add('hidden'));
   document.getElementById('tab-'+name).classList.remove('hidden');
   if(name === 'bills' && typeof billsOpen === 'function') billsOpen();
-  if(name === 'expenses' && typeof expensesOpen === 'function') expensesOpen();
-  if(name === 'reports' && typeof rentRollEnsure === 'function') rentRollEnsure();
+  if(name === 'payments' && typeof loadRemindCard === 'function') loadRemindCard();
   if(name === 'reports' && window.Chart) setTimeout(()=>Object.values(Chart.instances||{}).forEach(c=>{ try{ c.resize(); }catch(_){} }), 50);
   if(!fromPop) window.scrollTo({ top:0, behavior:'smooth' });
 }
@@ -1676,7 +1599,7 @@ function renderOccupancyDrilldown(units, title){
               <td>${u.unit_name}</td>
               <td>${u.building_name||'—'}</td>
               <td>${u.renter_name||'—'}</td>
-              <td>${fmtMoney(u.rent_amount||0)}</td>
+              <td>${fmtMoney((u.unit_rent ?? u.rent_amount) || 0)}${u.unit_rent!=null && Math.abs(Number(u.unit_rent)-Number(u.rent_amount))>0.004 ? `<div class="muted" style="font-size:11px;">share of ${fmtMoney(u.rent_amount)} combined lease</div>` : ''}</td>
               <td>${fmtDate(u.end_date)}</td>
             </tr>
           `).join('')}
@@ -2040,7 +1963,7 @@ async function showUnitDetail(unitId){
       .select('units(unit_name)').eq('contract_id', u.active_contract_id).neq('unit_id', unitId);
     const names = (siblings||[]).map(s=>s.units?.unit_name).filter(Boolean).join(', ');
     combinedNote = `<p class="muted" style="background:rgba(62,166,255,.1);padding:8px 10px;border-radius:8px;">
-      This unit is part of a combined lease with <strong>${names}</strong> — the rate, advance, and deposit shown below are the combined total for all of them together, not this unit alone.
+      This unit is part of a combined lease with <strong>${names}</strong> — one lease, one rent: the combined rent is <strong>${fmtMoney(u.current_rate)}</strong>. This unit's share is shown below, split by each unit's own asking price. Advance and deposit are for the whole lease.
     </p>`;
   }
 
@@ -2059,7 +1982,7 @@ async function showUnitDetail(unitId){
 
       <div class="grid" style="margin:14px 0;">
         <div class="stat"><div class="num" style="font-size:18px;">${u.renter_name || 'Vacant'}</div><div class="lbl">Current renter</div></div>
-        <div class="stat"><div class="num" style="font-size:18px;">${u.current_rate ? fmtMoney(u.current_rate) : '—'}</div><div class="lbl">Current rate (${u.current_rent_period||'—'})</div></div>
+        <div class="stat"><div class="num" style="font-size:18px;">${u.current_rate ? fmtMoney(u.unit_rate ?? u.current_rate) : '—'}</div><div class="lbl">Current rate (${u.current_rent_period||'—'})${u.other_units_in_same_contract>0 ? ' — this unit\'s share' : ''}</div></div>
         <div class="stat"><div class="num" style="font-size:18px;">${u.next_due_date ? fmtDate(u.next_due_date) : '—'}</div><div class="lbl">Next due date</div></div>
         <div class="stat"><div class="num" style="font-size:18px;color:var(--good);">${fmtMoney(u.total_revenue)}</div><div class="lbl">Running revenue (all time)</div></div>
       </div>
@@ -2210,7 +2133,7 @@ async function loadUnitsTable(){
             ${rows.map(u=>`
               <tr id="unitRow-${u.unit_id}">
                 <td>${u.unit_name}</td>
-                <td>${fmtMoney(u.occupancy==='occupied' && u.rent_amount ? u.rent_amount : (askingPrice[u.unit_id] || 0))}</td>
+                <td>${fmtMoney(u.occupancy==='occupied' && u.rent_amount ? (u.unit_rent ?? u.rent_amount) : (askingPrice[u.unit_id] || 0))}</td>
                 <td><span class="badge b-${u.occupancy}">${u.occupancy}</span></td>
                 <td>${u.renter_name||'—'}</td>
                 <td>${fmtDate(u.end_date)}</td>
@@ -2718,24 +2641,6 @@ async function showRenterDetailInner(renterId, fromPop){
   const { data: myProofs } = await sb.from('payment_proofs').select('id').eq('renter_id', renterId).eq('status','pending');
   const lab = x => x.rent_period === 'monthly' ? new Date(x.period_start+'T00:00:00').toLocaleDateString(undefined,{month:'long', year:'numeric'}) : (x.period_start === x.period_end ? fmtDate(x.period_start) : `${fmtDate(x.period_start)} – ${fmtDate(x.period_end)}`);
   const sched = [...dueRows.map(x=>({x, t:'<span class="tag bad">Overdue</span>'})), ...nextRows.map(x=>({x, t:'<span class="tag mute">Upcoming</span>'}))];
-  // What is owed, in one line: "11 months · ₱107,500 total (May 2025 – Oct 2026)"
-  const owedBals = (bals||[]).filter(b=>Number(b.balance) > 0);
-  const owedMonths = dueRows.length;
-  const owedRange = owedMonths ? (()=>{ const ps = dueRows.map(x=>x.period_start).sort(); const f = fmtMonthYear(ps[0]), t = fmtMonthYear(ps[ps.length-1]); return f===t ? f : `${f} – ${t}`; })() : '';
-  const owedRp = [...new Set(dueRows.map(x=>x.rent_period))];
-  const owedUnit = owedRp.length===1 ? periodUnitLabel(owedRp[0], owedMonths) : (owedMonths===1 ? 'period' : 'periods');
-  const owedInfo = { months: owedMonths, unit: owedUnit, total: totalOwed, range: owedRange,
-    lines: owedBals.map(b=>({ units: (byContract[b.contract_id]?.unit_names||[]).join(', ') || 'Contract', n: Number(b.periods_unpaid)||0, rp: b.rent_period, bal: Number(b.balance), range: balanceRangeText(b) })) };
-  // Paid months, newest first — shown folded under a tap so long histories don't push the unpaid ones away.
-  let paidRows = [];
-  try{
-    const cids = contractRows.map(c=>c.contract_id);
-    if(cids.length){
-      const { data: pr } = await sb.from('rent_payments').select('contract_id, period_start, period_end, due_date, amount_due, amount_paid, status')
-        .in('contract_id', cids).in('status', ['paid','waived']).lte('due_date', today).order('period_start', { ascending:false }).limit(240);
-      paidRows = (pr||[]).map(x=>({ ...x, rent_period: byContract[x.contract_id]?.rent_period || 'monthly', unit_names: (byContract[x.contract_id]?.unit_names||[]).join(', ') }));
-    }
-  }catch(e){ paidRows = []; }
   const mainBtn = dueRows.length ? `<button class="btn big" style="width:100%;" onclick="openRenterPay('${dueRows[0].contract_id}')">Record payment</button>`
                 : (myProofs||[]).length ? `<button class="btn big" style="width:100%;" onclick="openProofReview('${myProofs[0].id}')">Review proof</button>` : '';
   const activeIds = [...new Set(activeContracts.map(c=>c.contract_id))];
@@ -2752,7 +2657,7 @@ async function showRenterDetailInner(renterId, fromPop){
         // a plan that is fully paid closes itself
         for(const pl of list){ if(pl.status==='active' && pl.finished){ pl.status = 'completed'; sb.from('payment_plans').update({ status:'completed' }).eq('id', pl.id).then(()=>{}); } }
       }
-      planHtml = planCardHtml(r, list, itemsBy, totalOwed, owedInfo);
+      planHtml = planCardHtml(r, list, itemsBy, totalOwed);
     }
   }catch(e){}
   const panel = document.getElementById('renterDetailPanel');
@@ -2773,16 +2678,11 @@ async function showRenterDetailInner(renterId, fromPop){
       <div class="rdOwed" style="color:${totalOwed>0?'var(--bad)':'var(--good)'};">${fmtMoney(totalOwed)}</div>
       ${mainBtn}
       <button class="btn secondary big" style="margin-top:8px;" onclick="openPaidHistory({renterId:'${r.id}'})">📜 Paid history per unit</button>
-      <button class="btn secondary big" style="margin-top:8px;" onclick="openStatement({renterId:'${r.id}'})">📄 Statement of account</button>
     </div>
     ${planHtml}
     <div class="card">
       <p class="section-title">Schedule</p>
-      ${owedMonths ? `<div style="font-size:15px;margin:-4px 0 6px;"><strong style="color:var(--bad);">${owedMonths} ${owedUnit} unpaid · ${fmtMoney(totalOwed)}</strong> <span class="muted">${bulkEsc(owedRange)}</span></div>` : ''}
       ${sched.map(({x,t})=>`<div class="schedRow"><div><div>${bulkEsc(lab(x))}</div><div class="muted">${bulkEsc(x.unit_names||'')}${x.due_date ? ' · due '+fmtDate(x.due_date) : ''}</div></div><div style="text-align:right;"><div style="font-weight:700;">${fmtMoney(x.balance)}</div>${t}</div></div>`).join('') || '<p class="muted">Nothing due or coming up.</p>'}
-      ${paidRows.length ? `<details class="rdDetails" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;"><summary class="muted" style="font-weight:600;font-size:15px;">✓ ${paidRows.length}${paidRows.length>=240?'+':''} paid ${(()=>{ const rp = [...new Set(paidRows.map(x=>x.rent_period))]; return rp.length===1 ? periodUnitLabel(rp[0], paidRows.length) : (paidRows.length===1?'period':'periods'); })()} — tap to show</summary>
-        ${paidRows.map(x=>`<div class="schedRow"><div><div>${bulkEsc(lab(x))}</div><div class="muted">${bulkEsc(x.unit_names||'')}</div></div><div style="text-align:right;"><div style="font-weight:700;">${fmtMoney(x.status==='waived' ? 0 : x.amount_paid)}</div>${x.status==='waived' ? '<span class="tag mute">Waived</span>' : '<span class="tag good">Paid</span>'}</div></div>`).join('')}
-      </details>` : ''}
     </div>
     <details class="card rdDetails"><summary>Details</summary>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;">
@@ -2885,16 +2785,7 @@ function planTermsDefault(total, unitNames){
   ].join('\n\n');
 }
 
-function planOwedHtml(o, withLines){
-  if(!o || !(o.total > 0)) return '';
-  const head = `<div style="background:rgba(239,91,91,.10);border:1px solid rgba(239,91,91,.35);border-radius:10px;padding:10px 12px;margin:6px 0 10px;">
-    <div class="muted" style="font-size:13px;">Owed now</div>
-    <div style="font-size:22px;font-weight:800;color:var(--bad);">${o.months ? `${o.months} ${o.unit}, ` : ''}${fmtMoney(o.total)} total</div>
-    ${o.range ? `<div class="muted">${bulkEsc(o.range)}</div>` : ''}`;
-  const lines = withLines && o.lines.length > 1 ? o.lines.map(l=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:14px;margin-top:6px;padding-top:6px;border-top:1px solid rgba(239,91,91,.25);"><span>${bulkEsc(l.units)} <span class="muted">· ${l.n} ${periodUnitLabel(l.rp, l.n)}${l.range ? ' · '+bulkEsc(l.range) : ''}</span></span><strong>${fmtMoney(l.bal)}</strong></div>`).join('') : '';
-  return head + lines + '</div>';
-}
-function planCardHtml(r, plans, itemsBy, totalOwed, owedInfo){
+function planCardHtml(r, plans, itemsBy, totalOwed){
   const open = plans.filter(p=>p.status==='draft' || p.status==='active');
   const done = plans.filter(p=>p.status==='completed')[0];
   const itemTag = s => s==='paid' ? '<span class="tag good">Paid</span>' : s==='partial' ? '<span class="tag warn">Part paid</span>' : s==='late' ? '<span class="tag bad">Late</span>' : '<span class="tag mute">Upcoming</span>';
@@ -2911,11 +2802,7 @@ function planCardHtml(r, plans, itemsBy, totalOwed, owedInfo){
       <div class="planBar"><i style="width:${pct}%"></i></div>
       <div style="font-size:15px;"><strong>${fmtMoney(p.paid_total)}</strong> paid of ${fmtMoney(p.total_amount)} · <strong>${fmtMoney(p.remaining)}</strong> left</div>
       <div class="muted">${p.next_due_date ? `Next: ${fmtMoney(p.next_amount)} on ${fmtDate(p.next_due_date)}` : 'All installments paid'} · ${bulkEsc(PLAN_FREQ[p.frequency]||'')}</div>
-      <div class="muted">${its.length} installment${its.length===1?'':'s'} splitting ${fmtMoney(p.total_amount)}${owedInfo && owedInfo.total > Number(p.total_amount) + 0.004 ? ` · renter owes ${fmtMoney(owedInfo.total)} in all` : ''}</div>
-      ${(()=>{ const row = x=>`<div class="schedRow"><div><div>${fmtDate(x.due_date)}</div><div class="muted">Installment ${x.seq}</div></div><div style="text-align:right;"><div style="font-weight:700;">${fmtMoney(x.amount)}</div>${itemTag(x.item_status)}${x.item_status==='partial' ? `<div class="muted">${fmtMoney(x.paid)} paid</div>` : ''}</div></div>`;
-        const unpaid = its.filter(x=>x.item_status!=='paid'), paid = its.filter(x=>x.item_status==='paid');
-        return `<div style="margin-top:8px;">${unpaid.map(row).join('')}</div>` +
-          (paid.length ? `<details class="rdDetails" style="margin-top:6px;"><summary class="muted" style="font-weight:600;font-size:15px;">✓ ${paid.length} paid installment${paid.length===1?'':'s'} — tap to show</summary>${paid.map(row).join('')}</details>` : ''); })()}
+      <div style="margin-top:8px;">${its.map(x=>`<div class="schedRow"><div><div>${fmtDate(x.due_date)}</div><div class="muted">Installment ${x.seq}</div></div><div style="text-align:right;"><div style="font-weight:700;">${fmtMoney(x.amount)}</div>${itemTag(x.item_status)}${x.item_status==='partial' ? `<div class="muted">${fmtMoney(x.paid)} paid</div>` : ''}</div></div>`).join('')}</div>
       <p class="muted" style="margin:8px 0 0;">Payments are recorded the usual way (Record payment). Any rent payment on this contract from ${fmtDate(p.counts_from)} on counts toward the plan, oldest installment first.</p>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
         ${unsigned ? `<button class="btn big" onclick="sendPlanForSignature('${p.id}')">Send for signature</button>` : ''}
@@ -2931,8 +2818,7 @@ function planCardHtml(r, plans, itemsBy, totalOwed, owedInfo){
   });
   if(!open.length && totalOwed > 0){
     html += `<div class="card"><p class="section-title">Payment plan</p>
-      ${planOwedHtml(owedInfo, true)}
-      <p class="muted" style="margin:4px 0 10px;">Set up installments for what ${bulkEsc(r.name)} owes. They sign it from a link, and the app tracks every installment.${owedInfo && owedInfo.lines.length > 1 ? ' A plan covers one contract at a time — set up one per contract.' : ''}</p>
+      <p class="muted" style="margin:4px 0 10px;">Set up installments for what ${bulkEsc(r.name)} owes. They sign it from a link, and the app tracks every installment.</p>
       <button class="btn big" style="width:100%;" onclick="openPlanForm('${r.id}')">Set up payment plan</button></div>`;
   }
   if(!open.length && done){
@@ -2949,13 +2835,13 @@ let planDraft = null;
 async function openPlanForm(renterId, planId){
   const [{ data: r }, { data: bals }, { data: ru }] = await Promise.all([
     sb.from('renters').select('id, name').eq('id', renterId).single(),
-    sb.from('v_contract_balance').select('contract_id, balance, status, recover_dues, periods_unpaid, rent_period, first_unpaid_period, last_unpaid_period').eq('renter_id', renterId),
+    sb.from('v_contract_balance').select('contract_id, balance, status, recover_dues').eq('renter_id', renterId),
     sb.from('v_renter_units').select('contract_id, unit_name').eq('renter_id', renterId)
   ]);
   if(!r) return;
   const unitsOf = {}; (ru||[]).forEach(u=>{ (unitsOf[u.contract_id] ||= []).push((u.unit_name||'').trim()); });
   const cons = (bals||[]).filter(b=>Number(b.balance)>0 && (b.status==='active' || b.recover_dues))
-    .map(b=>({ id:b.contract_id, balance:Number(b.balance), n:Number(b.periods_unpaid)||0, rp:b.rent_period, range:balanceRangeText(b), units:[...new Set(unitsOf[b.contract_id]||[])].join(', ') }))
+    .map(b=>({ id:b.contract_id, balance:Number(b.balance), units:[...new Set(unitsOf[b.contract_id]||[])].join(', ') }))
     .sort((a,b)=>b.balance-a.balance);
   const today = manilaToday();
   if(planId){
@@ -2983,14 +2869,6 @@ function renderPlanForm(){
   ov.innerHTML = `<div style="max-width:620px;margin:0 auto;">
     <div class="card">
       <p class="section-title" style="margin-top:0;">${d.planId ? 'Edit payment plan' : 'Payment plan'} — ${bulkEsc(d.renterName)}</p>
-      ${(()=>{ const c = curCon; if(!c) return ''; const all = d.cons.reduce((s,x)=>s+x.balance,0), allN = d.cons.reduce((s,x)=>s+(x.n||0),0);
-        return `<div style="background:rgba(239,91,91,.10);border:1px solid rgba(239,91,91,.35);border-radius:10px;padding:10px 12px;margin:8px 0 12px;">
-          <div class="muted" style="font-size:13px;">Owed on ${bulkEsc(c.units||'this contract')}</div>
-          <div style="font-size:22px;font-weight:800;color:var(--bad);">${c.n ? `${c.n} ${periodUnitLabel(c.rp, c.n)}, ` : ''}${fmtMoney(c.balance)} total</div>
-          ${c.range ? `<div class="muted">${bulkEsc(c.range)}</div>` : ''}
-          ${d.cons.length > 1 ? `<div class="muted" style="margin-top:4px;">All contracts: ${allN} ${d.cons.every(x=>x.rp===c.rp) ? periodUnitLabel(c.rp, allN) : 'periods'}, ${fmtMoney(all)}. A plan covers one contract — pick it below.</div>` : ''}
-          <div id="planCoverNote" style="margin-top:6px;font-size:14px;"></div>
-        </div>`; })()}
       ${d.cons.length > 1 ? `<label>Contract</label><select onchange="planSet('contractId', this.value)">${d.cons.map(c=>`<option value="${c.id}" ${c.id===d.contractId?'selected':''}>${bulkEsc(c.units||'Contract')} — owes ${fmtMoney(c.balance)}</option>`).join('')}</select>` : `<div class="muted">${bulkEsc(curCon?.units||'')}${curCon ? ' · owes '+fmtMoney(curCon.balance) : ''}</div>`}
       <label style="margin-top:12px;">Amount the plan covers</label>
       <input type="number" inputmode="decimal" step="0.01" value="${d.total}" oninput="planSet('total', this.value)">
@@ -3018,10 +2896,6 @@ function renderPlanForm(){
 }
 function planRenderSched(){
   const d = planDraft, box = document.getElementById('planSchedBox'); if(!box) return;
-  { const note = document.getElementById('planCoverNote'), c = d.cons.find(x=>x.id===d.contractId);
-    if(note && c) note.innerHTML = Math.abs(Number(d.total) - c.balance) > 0.004
-      ? `This plan covers <strong>${fmtMoney(d.total)}</strong> of it. <a href="#" class="seeAll" onclick="planSet('total', ${c.balance});renderPlanForm();return false;">Use full ${fmtMoney(c.balance)}</a>`
-      : `This plan splits the full ${fmtMoney(c.balance)}.`; }
   const sum = Math.round(d.items.reduce((s,x)=>s+(Number(x.amount)||0),0)*100)/100;
   const ok = Math.abs(sum - d.total) < 0.01;
   box.innerHTML = `<p class="section-title" style="margin:0 0 6px;">Schedule (${d.items.length} installment${d.items.length===1?'':'s'})</p>` +
@@ -3681,7 +3555,6 @@ async function viewFloorPlan(buildingId){
 
 function contractSaveError(error){
   const m = (error && error.message) || '';
-  if(/UNIT_OVERLAP/.test(m)) return m.replace(/^.*UNIT_OVERLAP:\s*/,'') + '. A unit can only be on one active contract. Cancel or end that contract first.';
   if(/rent_due_day_check/.test(m)) return 'The rent due day must be 1 to 28 until ace-feature-update-31.sql is run in Supabase. Run it to allow 29, 30 and 31, or use a due day of 28 or lower.';
   return 'Error: ' + m;
 }
@@ -3741,21 +3614,6 @@ async function saveContract(){
   const { data: unitRows } = await sb.from('units').select('id, unit_name').in('id', unitIds);
   const unitNamesJoined = (unitRows||[]).map(u=>u.unit_name).join(', ');
 
-  // Overlap check: a unit can only be on one active contract.
-  let holders = [];
-  try{ holders = await xActiveHolders(unitIds, editingContractId); }catch(e){ return alert('Could not check whether the unit is free: ' + e.message); }
-  let editStatus = null;
-  if(editingContractId){ const { data: es } = await sb.from('contracts').select('status').eq('id', editingContractId).single(); editStatus = es && es.status; }
-  if(editingContractId && editStatus === 'active' && holders.length){
-    return alert('Not saved. ' + [...new Set(holders.map(h=>`${h.unit} already has an active contract with ${h.renter}`))].join('; ') +
-      '.\n\nRemove that unit from this contract, or cancel the other contract first. To move a renter into an occupied unit, create a NEW contract instead (it closes the old one).');
-  }
-  if(!editingContractId){
-    const clash = holders.filter(h=>h.start && h.start >= start_date);
-    if(clash.length) return alert('Not saved. The start date ' + fmtDate(start_date) + ' is on or before the start of the current contract on ' +
-      [...new Set(clash.map(h=>`${h.unit} (${h.renter}, started ${fmtDate(h.start)})`))].join(', ') + '. The two contracts would overlap.\n\nUse a start date after that, or edit the existing contract instead.');
-  }
-
   if(editingContractId){
     const { error } = await sb.from('contracts').update(payload).eq('id', editingContractId);
     if(error) return alert(contractSaveError(error));
@@ -3773,8 +3631,7 @@ async function saveContract(){
 
     // Sync which units this contract covers
     await sb.from('contract_units').delete().eq('contract_id', editingContractId);
-    { const { error: cuErr } = await sb.from('contract_units').insert(unitIds.map(uid=>({ contract_id: editingContractId, unit_id: uid })));
-      if(cuErr) alert('The contract was saved, but its units could not be updated: ' + contractSaveError(cuErr)); }
+    await sb.from('contract_units').insert(unitIds.map(uid=>({ contract_id: editingContractId, unit_id: uid })));
 
     const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
     const { data: fresh } = await sb.from('contracts').select('*').eq('id', editingContractId).single();
@@ -3790,12 +3647,11 @@ async function saveContract(){
     // kept on file, not deleted, the day before this one starts.
     const { data: existingActiveRows } = await sb.from('contracts')
       .select('id, unit_id').in('unit_id', unitIds).eq('status','active');
-    const distinctActiveIds = [...new Set([...(existingActiveRows||[]).map(r=>r.id), ...holders.map(h=>h.contractId)])];
+    const distinctActiveIds = [...new Set((existingActiveRows||[]).map(r=>r.id))];
     if(distinctActiveIds.length > 0){
       const dayBefore = addDaysISO(start_date, -1);
       const plural = distinctActiveIds.length > 1 ? 'contracts' : 'contract';
-      const who = [...new Set(holders.map(h=>`• ${h.unit} — ${h.renter}`))].join('\n');
-      if(!confirm(`⚠ The selected unit(s) are already rented:\n${who || '• (existing active contract)'}\n\n${distinctActiveIds.length} existing active ${plural} will be closed out (end date set to ${dayBefore}) and this new one will become current. Continue?`)) return;
+      if(!confirm(`${distinctActiveIds.length} existing active ${plural} on the selected unit(s) will be closed out (end date set to ${dayBefore}) and this new one will become current. Continue?`)) return;
       await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore, recover_dues: true }).in('id', distinctActiveIds);
       // the older contract stops billing from the new start date; its earlier dues stay at its own rate
       await sb.rpc('close_replaced_contract_periods', { p_old_contract_ids: distinctActiveIds, p_new_start: start_date });
@@ -3807,8 +3663,7 @@ async function saveContract(){
     await uploadSignedFileIfSelected(created.id);
     await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', created.id, 'advance_proof_path', 'advance_proof_name');
     await uploadFileToTable('cDepositProof', 'contracts', 'contracts', 'id', created.id, 'deposit_proof_path', 'deposit_proof_name');
-    { const { error: cuErr } = await sb.from('contract_units').insert(unitIds.map(uid=>({ contract_id: created.id, unit_id: uid })));
-      if(cuErr) alert('The contract was created, but its units could not be attached: ' + contractSaveError(cuErr) + '\nOpen the contract, fix the units and save again.'); }
+    await sb.from('contract_units').insert(unitIds.map(uid=>({ contract_id: created.id, unit_id: uid })));
 
     const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
     const newMsg = await buildNotifyMessage('new', renter?.name||'', unitNamesJoined, created);
@@ -5058,7 +4913,7 @@ async function statBuildRows(kind){
   const lid = id => (R.bmap[id]||{}).location_id || '';
   if(kind === 'occupied'){
     const cnt = {}; dashStat.units.filter(u=>u.occupancy==='occupied').forEach(u=>cnt[u.active_contract_id]=(cnt[u.active_contract_id]||0)+1);
-    return dashStat.units.filter(u=>u.occupancy==='occupied').map(u=>({ bid:u.building_id||'', lid:u.location_id||lid(u.building_id), bname:u.building_name||bn(u.building_id), value:(Number(u.rent_amount)||0)/(cnt[u.active_contract_id]||1), u }));
+    return dashStat.units.filter(u=>u.occupancy==='occupied').map(u=>({ bid:u.building_id||'', lid:u.location_id||lid(u.building_id), bname:u.building_name||bn(u.building_id), value:Number(u.unit_rent ?? ((Number(u.rent_amount)||0)/(cnt[u.active_contract_id]||1)))||0, u }));
   }
   if(kind === 'vacant')   return dashStat.units.filter(u=>u.occupancy==='vacant').map(u=>({ bid:u.building_id||'', lid:u.location_id||lid(u.building_id), bname:u.building_name||bn(u.building_id), value:R.price[u.unit_id]||0, u, price:R.price[u.unit_id]||0 }));
   if(kind === 'unpaid'){
@@ -5147,7 +5002,7 @@ function statRenderBody(){
   const cmp = (a,b)=> (a.bname||'').localeCompare(b.bname||'') || ((a.u||{}).unit_name||'').localeCompare(((b.u||{}).unit_name||''), undefined, {numeric:true});
   if(kind === 'occupied'){
     body.innerHTML = `<table><thead><tr><th>Unit</th><th>Building</th><th>Renter</th><th>Rent</th><th>Lease ends</th></tr></thead><tbody>${
-      rows.sort(cmp).map(x=>{ const u=x.u; return `<tr><td>${bulkEsc(u.unit_name)}</td><td>${bulkEsc(x.bname||'—')}</td><td>${bulkEsc(u.renter_name||'—')}</td><td>${u.rent_amount!=null?fmtMoney(u.rent_amount):'—'}</td><td>${u.end_date?fmtDate(u.end_date):'—'}</td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">Nothing matches.</td></tr>'}</tbody></table>`;
+      rows.sort(cmp).map(x=>{ const u=x.u; return `<tr><td>${bulkEsc(u.unit_name)}</td><td>${bulkEsc(x.bname||'—')}</td><td>${bulkEsc(u.renter_name||'—')}</td><td>${u.rent_amount!=null?fmtMoney(u.unit_rent ?? u.rent_amount):'—'}</td><td>${u.end_date?fmtDate(u.end_date):'—'}</td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">Nothing matches.</td></tr>'}</tbody></table>`;
   } else if(kind === 'vacant'){
     body.innerHTML = `<table><thead><tr><th>Unit</th><th>Building</th><th>Asking price</th></tr></thead><tbody>${
       rows.sort(cmp).map(x=>`<tr><td>${bulkEsc(x.u.unit_name)}</td><td>${x.bname?bulkEsc(x.bname):'<span class="muted">— not set</span>'}</td><td>${x.price?fmtMoney(x.price):'—'}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Nothing matches.</td></tr>'}</tbody></table>`;
@@ -5333,7 +5188,7 @@ async function togglePaymentHistory(id){
           <td>${(x.created_by_email||'—').replace(/</g,'&lt;')}<br><span class="muted" style="font-size:11px;">${new Date(x.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'})}</span></td>
           <td>${(x.note||'').replace(/</g,'&lt;')}</td>
           <td>${x.receipt_path ? `<button class="btn secondary small" onclick="viewStoredFile('${x.receipt_path.replace(/'/g,"\\'")}','Payment receipt')">Receipt</button>` : ''}
-              ${(!isRev && !wasRev) ? `<button class="btn secondary small" onclick="printReceipt('${x.id}')">🧾 Print receipt</button> <button class="btn danger small" onclick="reversePayment('${x.id}', ${x.amount}, '${id}')">Reverse</button>` : ''}</td>
+              ${(!isRev && !wasRev) ? `<button class="btn danger small" onclick="reversePayment('${x.id}', ${x.amount}, '${id}')">Reverse</button>` : ''}</td>
         </tr>`;
       }).join('')}</tbody>
     </table>`;
@@ -5629,7 +5484,7 @@ async function openPaidHistory(o){
             const txt = `${dt(p.received_date)} · ${esc(p.method||'')}${p.kind==='opening'?' (carried over)':''} · ${p.amount<0?'−':''}${money(Math.abs(p.amount))}${p.reference?' · '+esc(p.reference):''}`;
             if(isRev) return `<div class="rv">↩ Undone: ${txt}</div>`;
             if(was) return `<div class="wr">${txt} <span class="m">(undone)</span></div>`;
-            return `<div class="pl${p.id===lastId?' last':''}">${txt} <span class="no-print"><button onclick="parent.printReceipt('${p.id}','hist')">🧾 Receipt</button> <button onclick="parent.histEdit('${p.id}','${r.id}')">✎ Edit</button> <button class="dn" onclick="parent.histUndo('${p.id}',${p.amount})">↩ Undo</button></span></div>`;
+            return `<div class="pl${p.id===lastId?' last':''}">${txt} <span class="no-print"><button onclick="parent.histEdit('${p.id}','${r.id}')">✎ Edit</button> <button class="dn" onclick="parent.histUndo('${p.id}',${p.amount})">↩ Undo</button></span></div>`;
           }).join('') || '<span class="m">—</span>';
           return `<tr><td>${mth(r.period_start)}</td><td>${dt(r.due_date)}</td><td class="n">${money(r.amount_due)}</td><td class="n">${money(r.amount_paid)}</td><td style="color:${stCol[r.status]||'#666'};font-weight:600">${esc(r.status)}</td><td>${pays}</td></tr>`; }).join('') || '<tr><td colspan="6" class="m">Nothing billed yet.</td></tr>'}
         </tbody></table>${hidden>0 ? `<div class="m">${hidden} later month${hidden===1?'':'s'} not yet due ${hidden===1?'is':'are'} not shown.</div>` : ''}`;
@@ -5986,529 +5841,67 @@ async function billSendGo(){
   showNotifyPanel(r?.name||'', r?.email, r?.contact_number, message, 'billNotifyPanel', 'Your rent and utility bill', st);
   document.getElementById('billNotifyPanel').scrollIntoView({ behavior:'smooth' });
 }
+
+// ================= REMIND LIST (one-tap Viber / Messenger / SMS) =================
+let remindRows = [];
+function remindSentSet(){ try{ return new Set(JSON.parse(localStorage.getItem('remindSent:'+manilaToday())||'[]')); }catch(_){ return new Set(); } }
+function remindSentSave(s){ try{ localStorage.setItem('remindSent:'+manilaToday(), JSON.stringify([...s])); }catch(_){} }
+async function loadRemindCard(){
+  const el = document.getElementById('remindCard'); if(!el) return;
+  const { data, error } = await sb.from('v_open_reminders').select('*').in('reminder_type', ['rent_payment','plan_installment']).order('target_date');
+  if(error){ el.innerHTML = ''; return; }
+  const groups = {};
+  (data||[]).forEach(r=>{
+    const owed = Number(r.amount_due) - Number(r.amount_paid||0);
+    if(!(owed > 0.004)) return;
+    const g = groups[r.contract_id] || (groups[r.contract_id] = { contract_id:r.contract_id, name:r.renter_name, unit:r.unit_name, building:r.building_name, items:[], total:0, worst:-9999, kinds:new Set() });
+    g.items.push({ type:r.reminder_type, due:r.target_date, off:Number(r.days_offset), owed });
+    g.total += owed; g.worst = Math.max(g.worst, Number(r.days_offset)); g.kinds.add(r.reminder_type);
+  });
+  remindRows = Object.values(groups).sort((a,b)=>b.worst - a.worst);
+  const cids = remindRows.map(g=>g.contract_id);
+  if(cids.length){
+    const { data: cs } = await sb.from('contracts').select('id, renters(email, contact_number)').in('id', cids);
+    const m = {}; (cs||[]).forEach(c=>m[c.id] = c.renters || {});
+    remindRows.forEach(g=>{ g.email = m[g.contract_id]?.email || ''; g.phone = m[g.contract_id]?.contact_number || ''; });
+  }
+  remindRender();
+}
+function remindRender(){
+  const el = document.getElementById('remindCard');
+  const sent = remindSentSet();
+  if(!remindRows.length){ el.innerHTML = `<div class="card"><p class="section-title">Remind today</p><p class="muted">Nobody needs a reminder right now (nothing due within 5 days or overdue).</p></div>`; return; }
+  const done = remindRows.filter(g=>sent.has(g.contract_id)).length;
+  el.innerHTML = `<div class="card" style="border-color:var(--accent);">
+    <p class="section-title" style="margin-bottom:2px;">Remind today <span class="muted" style="font-weight:400;font-size:13px;">— ${done} of ${remindRows.length} sent by you today</span></p>
+    <p class="muted" style="margin-top:0;">SMS and email already go out automatically every morning. Use this list for Viber or Messenger: tap Send, pick the app, then tick "Sent" so you can see who is left.</p>
+    ${remindRows.map(g=>{
+      const s = sent.has(g.contract_id);
+      const status = g.worst > 0 ? `<span style="color:var(--bad);">${g.worst} day${g.worst===1?'':'s'} late</span>` : (g.worst === 0 ? 'due today' : `due in ${-g.worst} day${g.worst===-1?'':'s'}`);
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid rgba(255,255,255,.08);${s?'opacity:.5;':''}">
+        <div style="min-width:0;"><b>${bulkEsc(g.name)}</b> <span class="muted">${bulkEsc(g.building||'')} ${bulkEsc(g.unit||'')}</span><br>
+          <span style="font-size:13px;">${fmtMoney(g.total)} · ${g.items.length} item${g.items.length===1?'':'s'} · ${status}</span></div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="btn small" onclick="remindOpen('${g.contract_id}')">Send</button>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;margin:0;"><input type="checkbox" style="width:auto;" ${s?'checked':''} onchange="remindTick('${g.contract_id}', this.checked)"> Sent</label>
+        </div></div>`;
+    }).join('')}
+  </div>`;
+}
+function remindTick(cid, on){ const s = remindSentSet(); if(on) s.add(cid); else s.delete(cid); remindSentSave(s); remindRender(); }
+async function remindOpen(cid){
+  const g = remindRows.find(x=>x.contract_id === cid); if(!g) return;
+  const payText = await buildPaymentInstructionsText();
+  const lines = g.items.sort((a,b)=>a.due<b.due?-1:1).map(i=>{
+    const when = i.off > 0 ? `was due ${fmtDate(i.due)}, ${i.off} day${i.off===1?'':'s'} late` : (i.off === 0 ? `due today` : `due ${fmtDate(i.due)}`);
+    return `- ${i.type==='plan_installment'?'Payment plan installment':'Rent'} ${fmtMoney(i.owed)} (${when})`;
+  }).join('\n');
+  const message = `Hi ${g.name}, friendly reminder from Ace Properties for ${g.unit||'your unit'}:\n\n${lines}\n\nTotal: ${fmtMoney(g.total)}${payText}`;
+  showNotifyPanel(g.name, g.email, g.phone, message, 'remindNotify', 'Ace Properties — payment reminder');
+  document.getElementById('remindNotify').insertAdjacentHTML('beforeend', `<div style="margin:-6px 0 12px;"><button class="btn secondary small" onclick="remindTick('${cid}', true);document.getElementById('remindNotify').innerHTML=''">✔ Mark as sent</button></div>`);
+  document.getElementById('remindNotify').scrollIntoView({ behavior:'smooth' });
+}
 </script>
 
-<script>
-// ================= UPDATE 41: RENT ROLL · EXPENSES & NOI · STATEMENT OF ACCOUNT · RECEIPTS =================
-const xEsc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const xMoney = n => (Number(n||0) < -0.004 ? '−' : '') + '₱' + Math.abs(Number(n||0)).toLocaleString('en-PH',{minimumFractionDigits:2, maximumFractionDigits:2});
-const xDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'}) : '—';
-const xMon = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-PH',{year:'numeric',month:'short'}) : '—';
-const xToday = () => (typeof manilaToday === 'function' ? manilaToday() : new Date().toISOString().slice(0,10));
-const xYM = d => String(d).slice(0,7);
-function xAddMonths(ym, n){ const [y,m] = ym.split('-').map(Number); const d = new Date(Date.UTC(y, m-1+n, 1)); return d.toISOString().slice(0,7); }
-function xMonthEnd(ym){ const [y,m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0,10); }
-function xMissingTable(err){ return err && /expenses|relation .* does not exist|schema cache/i.test(err.message||''); }
-
-let xRefs = null;
-async function xEnsureRefs(force){
-  if(xRefs && !force) return xRefs;
-  const [{ data: locs }, { data: blds }, { data: units }] = await Promise.all([
-    sb.from('locations').select('id, name').order('name'),
-    sb.from('buildings').select('id, name, location_id').order('name'),
-    sb.from('units').select('id, unit_name, building_id, price').order('unit_name')
-  ]);
-  xRefs = { locs: locs||[], blds: blds||[], units: units||[],
-    bmap: Object.fromEntries((blds||[]).map(b=>[b.id,b])),
-    lmap: Object.fromEntries((locs||[]).map(l=>[l.id,l])),
-    umap: Object.fromEntries((units||[]).map(u=>[u.id,u])) };
-  return xRefs;
-}
-function xBldLabel(bid){
-  const R = xRefs; const b = R && R.bmap[bid]; if(!b) return 'General / not per building';
-  const l = R.lmap[b.location_id]; return b.name + (l ? ' · ' + l.name : '');
-}
-// Reads every page of a query (Supabase returns at most 1000 rows per call).
-async function xAll(build){
-  let out = [], from = 0; const size = 1000;
-  for(;;){
-    const { data, error } = await build().range(from, from + size - 1);
-    if(error) throw error;
-    out = out.concat(data||[]);
-    if(!data || data.length < size) break;
-    from += size;
-  }
-  return out;
-}
-async function xIn(table, select, col, ids, extra){
-  const out = []; const uniq = [...new Set(ids.filter(Boolean))];
-  for(let i=0;i<uniq.length;i+=150){
-    const chunk = uniq.slice(i,i+150);
-    const rows = await xAll(()=>{ let q = sb.from(table).select(select).in(col, chunk); return extra ? extra(q) : q; });
-    rows.forEach(r=>out.push(r));
-  }
-  return out;
-}
-async function xContractUnits(cids){
-  const map = {};
-  (await xIn('contract_units', 'contract_id, unit_id', 'contract_id', cids)).forEach(r=>{ (map[r.contract_id] ||= []).push(r.unit_id); });
-  return map;
-}
-function xBldOptions(withAll, allLabel){
-  const R = xRefs; if(!R) return '';
-  return (withAll ? `<option value="">${allLabel||'All buildings'}</option>` : '') +
-    R.blds.map(b=>`<option value="${b.id}">${xEsc(xBldLabel(b.id))}</option>`).join('');
-}
-
-// ---------------------------------------------------------------- RENT ROLL
-let rrLoaded = false, rrData = null;
-function rentRollEnsure(){ if(!rrLoaded) rentRollLoad(); }
-async function rentRollLoad(){
-  const card = document.getElementById('rrBody'); if(!card || !sb) return;
-  rrLoaded = true;
-  card.innerHTML = '<p class="muted">Loading rent roll…</p>';
-  try{
-    await xEnsureRefs();
-    const bSel = document.getElementById('rrBld');
-    if(bSel && bSel.options.length <= 1){ const v = bSel.value; bSel.innerHTML = xBldOptions(true); bSel.value = v; }
-    const endInp = document.getElementById('rrEnd');
-    if(endInp && !endInp.value) endInp.value = xYM(xToday());
-    const endYM = endInp.value || xYM(xToday());
-    const months = []; for(let i=11;i>=0;i--) months.push(xAddMonths(endYM, -i));
-    const a = months[0] + '-01', b = xMonthEnd(months[11]);
-    const rps = await xAll(()=>sb.from('rent_payments').select('id, contract_id, period_start, due_date, amount_due, amount_paid, status').gte('period_start', a).lte('period_start', b).order('period_start'));
-    const cids = [...new Set(rps.map(r=>r.contract_id))];
-    const cons = await xIn('contracts', 'id, status, renter_id, rent_period, rent_amount, start_date, end_date, recover_dues, renters(name, business_name)', 'id', cids);
-    const cu = await xContractUnits(cids);
-    rrData = { months, rps, cons: Object.fromEntries(cons.map(c=>[c.id,c])), cu };
-    rentRollRender();
-  }catch(e){
-    card.innerHTML = `<p class="muted">Could not load the rent roll: ${xEsc(e.message||e)}</p>`;
-  }
-}
-function rentRollCell(items, today){
-  if(!items || !items.length) return null;
-  const billed = items.filter(r=>r.status!=='waived').reduce((s,r)=>s+Number(r.amount_due),0);
-  const paid = items.reduce((s,r)=>s+Number(r.amount_paid),0);
-  if(items.every(r=>r.status==='waived')) return { k:'w', billed, paid };
-  if(billed > 0 && paid >= billed - 0.004) return { k:'p', billed, paid };
-  if(paid > 0) return { k:'h', billed, paid };
-  if(items.some(r=>r.due_date <= today && r.status!=='paid' && r.status!=='waived')) return { k:'o', billed, paid };
-  return { k:'f', billed, paid };
-}
-function rentRollRender(){
-  const card = document.getElementById('rrBody'); if(!card || !rrData) return;
-  const R = xRefs, today = xToday();
-  const bld = (document.getElementById('rrBld')||{}).value || '';
-  const q = ((document.getElementById('rrSearch')||{}).value || '').trim().toLowerCase();
-  const by = {};
-  rrData.rps.forEach(r=>{ ((by[r.contract_id] ||= {})[xYM(r.period_start)] ||= []).push(r); });
-  let rows = Object.keys(by).map(cid=>{
-    const c = rrData.cons[cid] || {}; const uids = rrData.cu[cid] || [];
-    const units = uids.map(u=>R.umap[u]).filter(Boolean);
-    const bids = [...new Set(units.map(u=>u.building_id))];
-    return { cid, c, units, bids,
-      unitTxt: units.map(u=>u.unit_name).sort().join(', ') || '—',
-      bldTxt: bids.map(b=>(R.bmap[b]||{}).name||'').filter(Boolean).join(', '),
-      renter: (c.renters && c.renters.name) || '—',
-      cells: Object.fromEntries(rrData.months.map(m=>[m, rentRollCell(by[cid][m], today)])) };
-  });
-  if(bld) rows = rows.filter(r=>r.bids.includes(bld));
-  if(q) rows = rows.filter(r=>(r.renter+' '+r.unitTxt+' '+((r.c.renters||{}).business_name||'')).toLowerCase().includes(q));
-  rows.sort((x,y)=>x.bldTxt.localeCompare(y.bldTxt) || x.unitTxt.localeCompare(y.unitTxt, undefined, {numeric:true}));
-  const sym = { p:'✓', h:'½', o:'!', f:'·', w:'–' };
-  const tot = Object.fromEntries(rrData.months.map(m=>[m,{billed:0,paid:0,over:0}]));
-  let overCells = 0, overAmt = 0;
-  rows.forEach(r=>rrData.months.forEach(m=>{ const x = r.cells[m]; if(!x) return; tot[m].billed += x.billed; tot[m].paid += x.paid; if(x.k==='o'||(x.k==='h' && (by[r.cid][m]||[]).some(i=>i.due_date<=today))){ overCells++; overAmt += Math.max(0, x.billed - x.paid); } }));
-  const head = rrData.months.map(m=>{ const d = new Date(m+'-01T00:00:00'); return `<th class="rrM">${d.toLocaleDateString('en-PH',{month:'short'})}<br><span>${String(d.getFullYear()).slice(2)}</span></th>`; }).join('');
-  const body = rows.map(r=>`<tr>
-      <td class="rrName"><a href="#" onclick="switchToTab('renters'); showRenterDetail('${r.c.renter_id}');return false;"><strong>${xEsc(r.unitTxt)}</strong></a><br><span class="muted">${xEsc(r.renter)}${r.c.status && r.c.status!=='active' ? ' · '+xEsc(r.c.status) : ''}</span></td>
-      ${rrData.months.map(m=>{ const x = r.cells[m]; if(!x) return '<td class="rrC"></td>';
-        const tip = `${xMon(m+'-01')}: billed ${xMoney(x.billed)}, paid ${xMoney(x.paid)}`;
-        return `<td class="rrC"><button class="rrK rr-${x.k}" title="${xEsc(tip)}" onclick="openPaymentsForContract('${r.cid}')">${sym[x.k]}</button></td>`; }).join('')}
-    </tr>`).join('');
-  const foot = `<tr class="rrFoot"><td class="rrName"><strong>Collected</strong><br><span class="muted">of billed</span></td>${rrData.months.map(m=>{ const t = tot[m]; const pct = t.billed>0 ? Math.round(t.paid/t.billed*100) : null;
-      return `<td class="rrC" title="${xEsc(xMoney(t.paid)+' of '+xMoney(t.billed))}"><span style="color:${pct==null?'var(--muted)':pct>=95?'var(--good)':pct>=70?'var(--warn)':'var(--bad)'};font-weight:700;">${pct==null?'—':pct+'%'}</span></td>`; }).join('')}</tr>`;
-  card.innerHTML = `
-    <p class="muted" style="margin:0 0 8px;">${rows.length} contract${rows.length===1?'':'s'} · <span style="color:var(--bad);font-weight:700;">${overCells} late month${overCells===1?'':'s'}</span> worth ${xMoney(overAmt)} · tap a box to open that contract's payments</p>
-    <div class="rrLegend"><span><b class="rrK rr-p">✓</b> Paid</span><span><b class="rrK rr-h">½</b> Partial</span><span><b class="rrK rr-o">!</b> Unpaid, due</span><span><b class="rrK rr-f">·</b> Not yet due</span><span><b class="rrK rr-w">–</b> Waived</span></div>
-    <div class="rrWrap"><table class="rrTable"><thead><tr><th class="rrName">Unit / renter</th>${head}</tr></thead><tbody>${body || `<tr><td class="rrName muted" colspan="13">No rent on file for these months.</td></tr>`}${rows.length?foot:''}</tbody></table></div>`;
-}
-
-// ---------------------------------------------------------------- EXPENSES & NOI
-const EXP_CATS = { repair:'Repair', maintenance:'Maintenance', real_property_tax:'Real property tax', association_dues:'Association dues',
-  utilities:'Utilities (owner-paid)', salaries:'Salaries / caretaker', security:'Security guard', insurance:'Insurance', supplies:'Supplies', permits:'Permits / fees', other:'Other' };
-let expRows = [], expEditingId = null, expReady = false;
-
-function expPeriodOptions(){
-  const ym = xYM(xToday()), y = Number(ym.slice(0,4));
-  let o = `<option value="y:${y}">This year (${y})</option><option value="l12">Last 12 months</option><option value="y:${y-1}">Last year (${y-1})</option>`;
-  for(let i=0;i<24;i++){ const m = xAddMonths(ym, -i); o += `<option value="m:${m}">${xMon(m+'-01')}</option>`; }
-  return o;
-}
-function expPeriodRange(v){
-  const ym = xYM(xToday());
-  if(v === 'l12') return [xAddMonths(ym,-11)+'-01', xMonthEnd(ym)];
-  if(v.startsWith('y:')){ const y = v.slice(2); return [`${y}-01-01`, `${y}-12-31`]; }
-  const m = v.slice(2); return [m+'-01', xMonthEnd(m)];
-}
-async function expensesOpen(){
-  if(!sb) return;
-  await xEnsureRefs();
-  if(!expReady){
-    expReady = true;
-    document.getElementById('noiPeriod').innerHTML = expPeriodOptions();
-    document.getElementById('exfPeriod').innerHTML = expPeriodOptions();
-    document.getElementById('exCat').innerHTML = Object.entries(EXP_CATS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
-    document.getElementById('exfCat').innerHTML = '<option value="">All types</option>' + Object.entries(EXP_CATS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
-    expFormReset();
-  }
-  const keep = id => { const el = document.getElementById(id); const v = el.value; return [el, v]; };
-  [['exBld', false, ''], ['exfBld', true, 'All buildings'], ['noiBld', true, 'All buildings']].forEach(([id, all, lbl])=>{
-    const [el, v] = keep(id);
-    el.innerHTML = (id==='exBld' ? '<option value="">General / not per building</option>' : '') + xBldOptions(all, lbl) + (id==='exfBld' ? '<option value="__none">General only</option>' : '');
-    el.value = v;
-  });
-  await Promise.all([expLoadList(), noiLoad()]);
-}
-function expFormReset(){
-  expEditingId = null;
-  document.getElementById('exFormTitle').textContent = 'Add an expense';
-  document.getElementById('exSaveBtn').textContent = 'Save expense';
-  ['exAmount','exPayee','exDesc'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('exDate').value = xToday();
-  document.getElementById('exFile').value = '';
-  document.getElementById('exFileCur').textContent = '';
-}
-async function expSave(){
-  const btn = document.getElementById('exSaveBtn');
-  const amount = parseFloat(document.getElementById('exAmount').value);
-  const expense_date = document.getElementById('exDate').value;
-  if(!(amount > 0)) return alert('Enter the amount paid.');
-  if(!expense_date) return alert('Enter the date paid.');
-  const payload = {
-    building_id: document.getElementById('exBld').value || null,
-    category: document.getElementById('exCat').value,
-    expense_date, amount,
-    payee: document.getElementById('exPayee').value.trim() || null,
-    description: document.getElementById('exDesc').value.trim() || null
-  };
-  btn.disabled = true;
-  try{
-    let id = expEditingId;
-    if(id){
-      const { error } = await sb.from('expenses').update(payload).eq('id', id);
-      if(error) throw error;
-    } else {
-      const { data, error } = await sb.from('expenses').insert(payload).select('id').single();
-      if(error) throw error;
-      id = data.id;
-    }
-    const f = document.getElementById('exFile').files[0];
-    if(f){
-      const path = `expenses/${id}/${Date.now()}-${f.name.replace(/[^A-Za-z0-9._-]/g,'_')}`;
-      const { error: upErr } = await sb.storage.from('contract-files').upload(path, f, { upsert:true });
-      if(upErr) alert('Expense saved, but the receipt photo could not be uploaded: ' + upErr.message);
-      else await sb.from('expenses').update({ receipt_path: path, receipt_name: f.name }).eq('id', id);
-    }
-    expFormReset();
-    await Promise.all([expLoadList(), noiLoad()]);
-  }catch(e){
-    alert(xMissingTable(e) ? 'Expenses are not set up yet. Run ace-feature-update-41.sql in Supabase (SQL Editor), then try again.' : 'Could not save: ' + (e.message||e));
-  }finally{ btn.disabled = false; }
-}
-function expEdit(id){
-  const x = expRows.find(r=>r.id===id); if(!x) return;
-  expEditingId = id;
-  document.getElementById('exFormTitle').textContent = 'Edit expense';
-  document.getElementById('exSaveBtn').textContent = 'Save changes';
-  document.getElementById('exBld').value = x.building_id || '';
-  document.getElementById('exCat').value = x.category;
-  document.getElementById('exDate').value = x.expense_date;
-  document.getElementById('exAmount').value = x.amount;
-  document.getElementById('exPayee').value = x.payee || '';
-  document.getElementById('exDesc').value = x.description || '';
-  document.getElementById('exFile').value = '';
-  document.getElementById('exFileCur').innerHTML = x.receipt_path ? `📎 ${xEsc(x.receipt_name||'receipt')} — kept unless you choose a new photo` : '';
-  document.getElementById('exFormCard').scrollIntoView({ behavior:'smooth' });
-}
-async function expDelete(id){
-  const x = expRows.find(r=>r.id===id); if(!x) return;
-  if(!confirm(`Delete this expense?\n${EXP_CATS[x.category]||x.category} · ${xMoney(x.amount)} · ${xDate(x.expense_date)}`)) return;
-  const { error } = await sb.from('expenses').delete().eq('id', id);
-  if(error) return alert('Could not delete: ' + error.message);
-  if(x.receipt_path) sb.storage.from('contract-files').remove([x.receipt_path]).catch(()=>{});
-  await Promise.all([expLoadList(), noiLoad()]);
-}
-async function expLoadList(){
-  const list = document.getElementById('exList'), sum = document.getElementById('exSummary');
-  const [a,b] = expPeriodRange(document.getElementById('exfPeriod').value);
-  const bld = document.getElementById('exfBld').value, cat = document.getElementById('exfCat').value;
-  list.innerHTML = '<p class="muted">Loading…</p>';
-  try{
-    expRows = await xAll(()=>{ let q = sb.from('expenses').select('*').gte('expense_date', a).lte('expense_date', b).order('expense_date', { ascending:false }).order('created_at', { ascending:false });
-      if(bld === '__none') q = q.is('building_id', null); else if(bld) q = q.eq('building_id', bld);
-      if(cat) q = q.eq('category', cat); return q; });
-  }catch(e){
-    sum.textContent = '';
-    list.innerHTML = xMissingTable(e) ? '<p class="muted">Expenses are not set up yet. Run <b>ace-feature-update-41.sql</b> in Supabase (SQL Editor), then tap Refresh.</p>' : `<p class="muted">Could not load: ${xEsc(e.message||e)}</p>`;
-    return;
-  }
-  const total = expRows.reduce((s,r)=>s+Number(r.amount),0);
-  sum.innerHTML = `${expRows.length} expense${expRows.length===1?'':'s'} · <b>${xMoney(total)}</b>`;
-  list.innerHTML = expRows.map(x=>`<div class="hcard">
-      <div class="top"><div class="nm">${xEsc(EXP_CATS[x.category]||x.category)}</div><div class="amt">${xMoney(x.amount)}</div></div>
-      <div class="sub">${xDate(x.expense_date)} · ${xEsc(xBldLabel(x.building_id))}${x.payee ? ' · '+xEsc(x.payee) : ''}</div>
-      ${x.description ? `<div style="font-size:14px;">${xEsc(x.description)}</div>` : ''}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-        ${x.receipt_path ? `<button class="btn secondary small" onclick="viewStoredFile('${x.receipt_path.replace(/'/g,"\\'")}','Expense receipt')">📎 Receipt</button>` : ''}
-        <button class="btn secondary small" onclick="expEdit('${x.id}')">✎ Edit</button>
-        <button class="btn danger small" onclick="expDelete('${x.id}')">Delete</button>
-      </div></div>`).join('') || '<p class="muted">No expenses for this filter.</p>';
-}
-
-// Income per building. "for" = rent/bills belonging to months in the period (default);
-// "received" = cash actually received on dates in the period.
-async function noiLoad(){
-  const box = document.getElementById('noiBody'); if(!box) return;
-  box.innerHTML = '<p class="muted">Working it out…</p>';
-  try{
-    const R = await xEnsureRefs();
-    const [a,b] = expPeriodRange(document.getElementById('noiPeriod').value);
-    const basis = document.getElementById('noiBasis').value;
-    const onlyB = document.getElementById('noiBld').value;
-    const inc = {}, bills = {}, exp = {};
-    const add = (o,k,v)=>{ o[k||''] = (o[k||'']||0) + v; };
-    // split a contract's money across its units' buildings by unit price
-    const cuCache = {};
-    const splitContract = (cid, amt, target) => {
-      const uids = cuCache[cid] || [];
-      if(!uids.length){ add(target, '', amt); return; }
-      const w = uids.map(u=>Math.max(0, Number((R.umap[u]||{}).price)||0)); const tw = w.reduce((s,x)=>s+x,0);
-      uids.forEach((u,i)=>add(target, (R.umap[u]||{}).building_id||'', amt * (tw>0 ? w[i]/tw : 1/uids.length)));
-    };
-    if(basis === 'received'){
-      const pays = await xAll(()=>sb.from('payments').select('amount, rent_payment_id, utility_id').gte('received_date', a).lte('received_date', b));
-      const rpMap = Object.fromEntries((await xIn('rent_payments', 'id, contract_id', 'id', pays.map(p=>p.rent_payment_id))).map(r=>[r.id, r.contract_id]));
-      const utMap = Object.fromEntries((await xIn('utilities', 'id, unit_id', 'id', pays.map(p=>p.utility_id))).map(r=>[r.id, r.unit_id]));
-      Object.assign(cuCache, await xContractUnits(Object.values(rpMap)));
-      pays.forEach(p=>{
-        const v = Number(p.amount)||0;
-        if(p.rent_payment_id) splitContract(rpMap[p.rent_payment_id], v, inc);
-        else if(p.utility_id) add(bills, (R.umap[utMap[p.utility_id]]||{}).building_id||'', v);
-      });
-    } else {
-      const rps = await xAll(()=>sb.from('rent_payments').select('contract_id, amount_paid').gte('period_start', a).lte('period_start', b).gt('amount_paid', 0));
-      Object.assign(cuCache, await xContractUnits(rps.map(r=>r.contract_id)));
-      rps.forEach(r=>splitContract(r.contract_id, Number(r.amount_paid)||0, inc));
-      const ut = await xAll(()=>sb.from('utilities').select('unit_id, amount').eq('status','paid').gte('billing_month', a).lte('billing_month', b));
-      ut.forEach(u=>add(bills, (R.umap[u.unit_id]||{}).building_id||'', Number(u.amount)||0));
-    }
-    let expOk = true;
-    try{
-      const ex = await xAll(()=>sb.from('expenses').select('building_id, amount').gte('expense_date', a).lte('expense_date', b));
-      ex.forEach(x=>add(exp, x.building_id||'', Number(x.amount)||0));
-    }catch(e){ if(xMissingTable(e)) expOk = false; else throw e; }
-    let keys = [...new Set([...Object.keys(inc), ...Object.keys(bills), ...Object.keys(exp)])];
-    if(onlyB) keys = keys.filter(k=>k===onlyB);
-    keys.sort((x,y)=> (x===''?1:0)-(y===''?1:0) || xBldLabel(x).localeCompare(xBldLabel(y)));
-    const T = { i:0, u:0, e:0 };
-    const rowsHtml = keys.map(k=>{
-      const i = inc[k]||0, u = bills[k]||0, e = exp[k]||0, n = i+u-e; T.i+=i; T.u+=u; T.e+=e;
-      const m = (i+u)>0 ? Math.round(n/(i+u)*100) : null;
-      return `<tr><td>${xEsc(xBldLabel(k))}</td><td class="n">${xMoney(i)}</td><td class="n">${xMoney(u)}</td><td class="n">${xMoney(e)}</td>
-        <td class="n" style="font-weight:800;color:${n<0?'var(--bad)':'var(--good)'};">${xMoney(n)}</td><td class="n">${m==null?'—':m+'%'}</td></tr>`;
-    }).join('');
-    const N = T.i + T.u - T.e, M = (T.i+T.u)>0 ? Math.round(N/(T.i+T.u)*100) : null;
-    box.innerHTML = `
-      <div class="grid" style="margin:4px 0 12px;grid-template-columns:repeat(3,1fr);gap:6px;">
-        <div class="stat" style="padding:10px 4px;"><div class="num" style="font-size:16px;">${xMoney(T.i+T.u)}</div><div class="lbl">Collected</div></div>
-        <div class="stat" style="padding:10px 4px;"><div class="num" style="font-size:16px;color:var(--warn);">${xMoney(T.e)}</div><div class="lbl">Expenses</div></div>
-        <div class="stat" style="padding:10px 4px;"><div class="num" style="font-size:16px;color:${N<0?'var(--bad)':'var(--good)'};">${xMoney(N)}</div><div class="lbl">You keep (NOI)${M==null?'':' · '+M+'%'}</div></div>
-      </div>
-      ${expOk ? '' : '<p class="muted" style="color:var(--warn);">Expenses are not set up yet — run ace-feature-update-41.sql in Supabase. Showing income only.</p>'}
-      <div style="overflow-x:auto;"><table class="noiT"><thead><tr><th>Building</th><th class="n">Rent</th><th class="n">Bills</th><th class="n">Expenses</th><th class="n">NOI</th><th class="n">Margin</th></tr></thead>
-      <tbody>${rowsHtml || '<tr><td colspan="6" class="muted">Nothing collected or spent in this period.</td></tr>'}</tbody>
-      ${keys.length>1 ? `<tfoot><tr><td><b>Total</b></td><td class="n"><b>${xMoney(T.i)}</b></td><td class="n"><b>${xMoney(T.u)}</b></td><td class="n"><b>${xMoney(T.e)}</b></td><td class="n"><b>${xMoney(N)}</b></td><td class="n"><b>${M==null?'—':M+'%'}</b></td></tr></tfoot>` : ''}</table></div>`;
-  }catch(e){
-    box.innerHTML = `<p class="muted">Could not work out NOI: ${xEsc(e.message||e)}</p>`;
-  }
-}
-
-// ---------------------------------------------------------------- STATEMENT OF ACCOUNT + RECEIPTS
-function xPayKey(p){ return [p.received_date, p.method||'', p.reference||'', p.created_by_email||''].join('|'); }
-// Groups payments recorded together (same day, method, reference, staff, within 10 minutes) into one receipt.
-function xGroupPayments(list){
-  const live = list.slice().sort((x,y)=>String(x.created_at).localeCompare(String(y.created_at)));
-  const groups = [];
-  live.forEach(p=>{
-    const g = groups.find(g=>g.key===xPayKey(p) && Math.abs(new Date(p.created_at) - new Date(g.last)) <= 10*60*1000);
-    if(g){ g.items.push(p); g.last = p.created_at; } else groups.push({ key:xPayKey(p), last:p.created_at, items:[p] });
-  });
-  return groups;
-}
-async function xRenterLedger(renterId){
-  const [{ data: ren }, { data: cons }] = await Promise.all([
-    sb.from('renters').select('id, name, business_name, address, contact_number, email, renter_code').eq('id', renterId).single(),
-    sb.from('contracts').select('id, status, rent_amount, rent_period, start_date, end_date, deposit, advance, recover_dues').eq('renter_id', renterId)
-  ]);
-  const cids = (cons||[]).map(c=>c.id);
-  const cu = await xContractUnits(cids);
-  const R = await xEnsureRefs();
-  const unitNames = cid => (cu[cid]||[]).map(u=>(R.umap[u]||{}).unit_name).filter(Boolean).sort().join(', ') || '—';
-  const rps = await xIn('rent_payments', 'id, contract_id, period_start, period_end, due_date, amount_due, amount_paid, status', 'contract_id', cids);
-  const uts = await xIn('utilities', 'id, unit_id, contract_id, utility_type, billing_month, amount, status, due_date, description', 'contract_id', cids);
-  const pays = [
-    ...await xIn('payments', 'id, rent_payment_id, utility_id, kind, amount, received_date, method, reference, reverses_payment_id, created_by_email, created_at', 'rent_payment_id', rps.map(r=>r.id)),
-    ...await xIn('payments', 'id, rent_payment_id, utility_id, kind, amount, received_date, method, reference, reverses_payment_id, created_by_email, created_at', 'utility_id', uts.map(u=>u.id))
-  ];
-  return { ren, cons: cons||[], cu, unitNames, rps, uts, pays, rpMap: Object.fromEntries(rps.map(r=>[r.id,r])), utMap: Object.fromEntries(uts.map(u=>[u.id,u])) };
-}
-const xBillName = t => ({ electric:'Electric', water:'Water', internet:'Internet', hauling:'Hauling / trash', damage:'Damage', other:'Other charge' }[t] || 'Bill');
-function xPayLabel(L, p){
-  if(p.rent_payment_id){ const r = L.rpMap[p.rent_payment_id]; return r ? `Rent ${xMon(r.period_start)} · ${L.unitNames(r.contract_id)}` : 'Rent'; }
-  if(p.utility_id){ const u = L.utMap[p.utility_id]; return u ? `${xBillName(u.utility_type)} ${xMon(u.billing_month)} · ${(xRefs.umap[u.unit_id]||{}).unit_name||''}` : 'Bill'; }
-  return 'Payment';
-}
-function xLivePayments(pays){
-  const reversed = new Set(pays.filter(p=>p.reverses_payment_id).map(p=>p.reverses_payment_id));
-  return pays.filter(p=>p.kind!=='reversal' && !reversed.has(p.id));
-}
-function xDocCss(){ return `body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;background:#fff;padding:22px;max-width:820px;margin:0 auto;font-size:14px}
-  .lh{display:flex;justify-content:space-between;gap:16px;border-bottom:3px solid #111;padding-bottom:10px;margin-bottom:14px}.lh h1{font-size:20px;margin:0}.lh .r{text-align:right}
-  h2{font-size:15px;margin:18px 0 6px;text-transform:uppercase;letter-spacing:.04em}.m{color:#666;font-size:12px}
-  table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #ddd;padding:6px;text-align:left;vertical-align:top}th{background:#f3f3f3;font-size:12px}.n{text-align:right;white-space:nowrap}
-  .tot td{border-top:2px solid #111;font-weight:800;font-size:15px}.due{font-size:26px;font-weight:800}.box{border:1px solid #ccc;border-radius:8px;padding:10px 12px;margin-top:12px;white-space:pre-line}
-  .bar{position:sticky;top:0;background:#fff8e1;border:1px solid #f0d58a;border-radius:8px;padding:8px;margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .bar a,.bar button{font-size:13px;padding:6px 10px;border:1px solid #999;border-radius:6px;background:#fff;color:#111;text-decoration:none;cursor:pointer}
-  @media print{.no-print{display:none!important}body{padding:0}}`; }
-
-let xStmtRenter = null;
-async function openStatement(o){
-  o = o || {};
-  showPreviewOverlay('Statement of account');
-  const frame = document.getElementById('previewFrame');
-  frame.removeAttribute('src');
-  frame.srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
-  try{
-    let renterId = o.renterId;
-    if(!renterId && o.contractId){ const { data } = await sb.from('contracts').select('renter_id').eq('id', o.contractId).single(); renterId = data && data.renter_id; }
-    if(!renterId) throw new Error('Pick a renter or contract first.');
-    xStmtRenter = renterId;
-    const L = await xRenterLedger(renterId), today = xToday();
-    const conById = Object.fromEntries(L.cons.map(c=>[c.id,c]));
-    const counts = c => c && (c.status==='active' || (c.status==='cancelled' && c.recover_dues));
-    const unpaidRent = L.rps.filter(r=>counts(conById[r.contract_id]) && r.due_date <= today && !['paid','waived'].includes(r.status))
-      .sort((x,y)=>String(x.due_date).localeCompare(String(y.due_date)));
-    const unpaidBills = L.uts.filter(u=>u.status==='unpaid').sort((x,y)=>String(x.billing_month).localeCompare(String(y.billing_month)));
-    const rentBal = unpaidRent.reduce((s,r)=>s+Number(r.amount_due)-Number(r.amount_paid),0);
-    const billBal = unpaidBills.reduce((s,u)=>s+Number(u.amount),0);
-    const total = rentBal + billBal;
-    const next = L.rps.filter(r=>counts(conById[r.contract_id]) && r.due_date > today && !['paid','waived'].includes(r.status)).sort((x,y)=>String(x.due_date).localeCompare(String(y.due_date)))[0];
-    const depositHeld = L.cons.filter(c=>c.status==='active').reduce((s,c)=>s+Number(c.deposit||0),0);
-    const since = addDaysISO(today, -183);
-    const recent = xGroupPayments(xLivePayments(L.pays).filter(p=>p.received_date >= since)).reverse();
-    const payText = await buildPaymentInstructionsText();
-    const ren = L.ren || {};
-    const lines = [
-      ...unpaidRent.map(r=>({ d:r.due_date, t:`Rent ${xMon(r.period_start)} · ${L.unitNames(r.contract_id)}`, a:Number(r.amount_due), p:Number(r.amount_paid) })),
-      ...unpaidBills.map(u=>({ d:u.due_date||u.billing_month, t:`${xBillName(u.utility_type)} ${xMon(u.billing_month)} · ${(xRefs.umap[u.unit_id]||{}).unit_name||''}${u.description?' · '+u.description:''}`, a:Number(u.amount), p:0 }))
-    ].sort((x,y)=>String(x.d).localeCompare(String(y.d)));
-    const rentRange = unpaidRent.length ? (unpaidRent.length===1 ? xMon(unpaidRent[0].period_start) : `${xMon(unpaidRent[0].period_start)} – ${xMon(unpaidRent[unpaidRent.length-1].period_start)}`) : '';
-    const msg = total > 0.004
-      ? `Hi ${ren.name||''}, this is your statement as of ${xDate(today)}.\nAmount due: ${xMoney(total)}` +
-        (rentBal>0 ? `\n- Rent: ${xMoney(rentBal)} (${unpaidRent.length} unpaid, ${rentRange})` : '') +
-        (billBal>0 ? `\n- Bills: ${xMoney(billBal)} (${unpaidBills.length})` : '') +
-        `\nKindly settle at your earliest convenience. Thank you.${payText}`
-      : `Hi ${ren.name||''}, as of ${xDate(today)} your account is fully paid. Thank you!${next ? `\nNext rent: ${xMoney(Number(next.amount_due)-Number(next.amount_paid))} due ${xDate(next.due_date)}.` : ''}`;
-    window.__xStmtMsg = msg;
-    const viber = typeof viberNumber === 'function' ? viberNumber(ren.contact_number) : null;
-    frame.srcdoc = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${xDocCss()}</style><body>
-      <div class="bar no-print"><b>Send summary:</b>
-        ${ren.contact_number ? `<a href="${smsHref(ren.contact_number, msg)}" target="_top">💬 SMS</a>` : ''}
-        ${viber ? `<a href="viber://chat?number=${viber}&text=${encodeURIComponent(msg)}" target="_top">Viber</a>` : ''}
-        <button onclick="parent.copyText(parent.__xStmtMsg, this)">📋 Copy message</button>
-        <span class="m">To send the full statement: Print → Save as PDF, then attach.</span></div>
-      <div class="lh"><div><h1>${xEsc(LESSOR_NAME)}</h1><div class="m">${xEsc(LESSOR_ADDRESS)}</div></div>
-        <div class="r"><b style="font-size:17px;">STATEMENT OF ACCOUNT</b><div class="m">As of ${xDate(today)}</div></div></div>
-      <table style="margin-bottom:6px;"><tr><td style="border:0;padding:0;"><b>${xEsc(ren.name||'')}</b>${ren.business_name ? '<br>'+xEsc(ren.business_name) : ''}${ren.address ? '<br><span class="m">'+xEsc(ren.address)+'</span>' : ''}</td>
-        <td style="border:0;padding:0;text-align:right;" class="m">Account: ${xEsc(ren.renter_code||'—')}${ren.contact_number ? '<br>'+xEsc(ren.contact_number) : ''}</td></tr></table>
-      <div class="box" style="display:flex;justify-content:space-between;align-items:center;white-space:normal;"><div><div class="m">TOTAL AMOUNT DUE</div><div class="due" style="color:${total>0.004?'#c0392b':'#1a7f37'}">${xMoney(total)}</div></div>
-        <div class="m" style="text-align:right;">${next ? `Next rent: <b>${xMoney(Number(next.amount_due)-Number(next.amount_paid))}</b><br>due ${xDate(next.due_date)}` : ''}</div></div>
-      <h2>Unpaid charges</h2>
-      <table><thead><tr><th>Due</th><th>Description</th><th class="n">Amount</th><th class="n">Paid</th><th class="n">Balance</th></tr></thead><tbody>
-      ${lines.map(l=>`<tr><td>${xDate(l.d)}</td><td>${xEsc(l.t)}</td><td class="n">${xMoney(l.a)}</td><td class="n">${xMoney(l.p)}</td><td class="n">${xMoney(l.a-l.p)}</td></tr>`).join('') || '<tr><td colspan="5" class="m">Nothing unpaid. Thank you!</td></tr>'}
-      ${lines.length ? `<tr class="tot"><td colspan="4">Total amount due</td><td class="n">${xMoney(total)}</td></tr>` : ''}</tbody></table>
-      <h2>Payments received — last 6 months</h2>
-      <table><thead><tr><th>Date</th><th>For</th><th>Paid through</th><th class="n">Amount</th><th class="no-print"></th></tr></thead><tbody>
-      ${recent.map(g=>{ const p0 = g.items[0]; const amt = g.items.reduce((s,p)=>s+Number(p.amount),0);
-        return `<tr><td>${xDate(p0.received_date)}</td><td>${g.items.map(p=>xEsc(xPayLabel(L,p))).join('<br>')}</td><td>${xEsc((typeof PAY_METHOD_LABEL!=='undefined' && PAY_METHOD_LABEL[p0.method]) || p0.method || '—')}${p0.reference ? '<br><span class="m">'+xEsc(p0.reference)+'</span>' : ''}${p0.kind==='opening' ? '<br><span class="m">carried over</span>' : ''}</td>
-          <td class="n">${xMoney(amt)}</td><td class="no-print"><button onclick="parent.printReceipt('${p0.id}','stmt')">🧾 Receipt</button></td></tr>`; }).join('') || '<tr><td colspan="5" class="m">No payments in the last 6 months.</td></tr>'}</tbody></table>
-      ${depositHeld > 0 ? `<p class="m">Security deposit on file: ${xMoney(depositHeld)}. The deposit is held and is not applied to monthly rent.</p>` : ''}
-      ${payText ? `<div class="box"><b>How to pay</b>${xEsc(payText.replace(/^\s*You can pay via:/,''))}</div>` : ''}
-      <p class="m" style="margin-top:16px;">Please disregard this statement if payment has already been made. For questions, please contact ${xEsc(LESSOR_NAME.replace(/\.$/,''))}.</p></body>`;
-    document.getElementById('previewTitle').textContent = 'Statement — ' + (ren.name || '');
-  }catch(e){
-    frame.srcdoc = `<body style="font-family:sans-serif;padding:40px;"><h2>Could not build the statement</h2><p>${xEsc(e.message||e)}</p></body>`;
-  }
-}
-
-async function printReceipt(paymentId, back){
-  showPreviewOverlay('Receipt');
-  const frame = document.getElementById('previewFrame');
-  frame.removeAttribute('src');
-  frame.srcdoc = '<body style="font-family:sans-serif;padding:40px;color:#666;">Loading…</body>';
-  try{
-    const { data: p, error } = await sb.from('payments').select('*').eq('id', paymentId).single();
-    if(error || !p) throw new Error('Payment not found.');
-    let contractId = null;
-    if(p.rent_payment_id){ const { data } = await sb.from('rent_payments').select('contract_id').eq('id', p.rent_payment_id).single(); contractId = data && data.contract_id; }
-    else if(p.utility_id){ const { data } = await sb.from('utilities').select('contract_id').eq('id', p.utility_id).single(); contractId = data && data.contract_id; }
-    if(!contractId) throw new Error('This payment is not linked to a contract.');
-    const { data: c } = await sb.from('contracts').select('renter_id').eq('id', contractId).single();
-    const L = await xRenterLedger(c.renter_id);
-    const groups = xGroupPayments(L.pays.filter(x=>x.kind!=='reversal'));
-    const g = groups.find(g=>g.items.some(x=>x.id===paymentId)) || { items:[p] };
-    const reversed = new Set(L.pays.filter(x=>x.reverses_payment_id).map(x=>x.reverses_payment_id));
-    const items = g.items.filter(x=>!reversed.has(x.id) || x.id===paymentId);
-    const isVoid = items.every(x=>reversed.has(x.id));
-    const total = items.filter(x=>!reversed.has(x.id) || isVoid).reduce((s,x)=>s+Number(x.amount),0);
-    const today = xToday();
-    const conById = Object.fromEntries(L.cons.map(c=>[c.id,c]));
-    const counts = c => c && (c.status==='active' || (c.status==='cancelled' && c.recover_dues));
-    const balNow = L.rps.filter(r=>counts(conById[r.contract_id]) && r.due_date <= today && !['paid','waived'].includes(r.status)).reduce((s,r)=>s+Number(r.amount_due)-Number(r.amount_paid),0)
-      + L.uts.filter(u=>u.status==='unpaid').reduce((s,u)=>s+Number(u.amount),0);
-    const whole = Math.floor(total + 0.0001), cents = Math.round((total - whole) * 100);
-    const words = numberToWords(whole) + ' Pesos' + (cents ? ` and ${String(cents).padStart(2,'0')}/100` : ' Only');
-    const no = 'AR-' + String(items[0].received_date).replace(/-/g,'') + '-' + String(items[0].id).slice(0,4).toUpperCase();
-    const ren = L.ren || {};
-    const method = (typeof PAY_METHOD_LABEL!=='undefined' && PAY_METHOD_LABEL[items[0].method]) || items[0].method || '—';
-    const backBtn = back === 'stmt' ? `<button onclick="parent.openStatement({renterId:'${c.renter_id}'})">← Back to statement</button>`
-      : back === 'hist' ? `<button onclick="parent.xBackToHist()">← Back to history</button>` : '';
-    frame.srcdoc = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${xDocCss()}
-      .rc{border:2px solid #111;border-radius:10px;padding:18px;position:relative}.amtw{font-size:30px;font-weight:800}.sig{margin-top:36px;display:flex;justify-content:flex-end}.sig div{border-top:1px solid #111;min-width:230px;text-align:center;padding-top:4px}
-      .void{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:72px;font-weight:900;color:rgba(192,57,43,.25);transform:rotate(-18deg);pointer-events:none}</style><body>
-      <div class="bar no-print">${backBtn}<span class="m">Print → Save as PDF to send it by Viber or email.</span></div>
-      <div class="rc">${isVoid ? '<div class="void">VOID</div>' : ''}
-        <div class="lh"><div><h1>${xEsc(LESSOR_NAME)}</h1><div class="m">${xEsc(LESSOR_ADDRESS)}</div></div>
-          <div class="r"><b style="font-size:17px;">ACKNOWLEDGEMENT RECEIPT</b><div class="m">No. ${xEsc(no)}</div><div class="m">Date: ${xDate(items[0].received_date)}</div></div></div>
-        <p>Received from <b>${xEsc(ren.name||'')}</b>${ren.business_name ? ' ('+xEsc(ren.business_name)+')' : ''} the amount of</p>
-        <div class="amtw">${xMoney(total)}</div><div style="font-style:italic;margin-bottom:12px;">${xEsc(words)}</div>
-        <table><thead><tr><th>Payment for</th><th class="n">Amount</th></tr></thead><tbody>
-          ${items.map(x=>`<tr><td>${xEsc(xPayLabel(L,x))}${reversed.has(x.id) ? ' <span class="m">(undone)</span>' : ''}</td><td class="n">${xMoney(x.amount)}</td></tr>`).join('')}
-          <tr class="tot"><td>Total received</td><td class="n">${xMoney(total)}</td></tr></tbody></table>
-        <p style="margin-top:10px;">Paid through: <b>${xEsc(method)}</b>${items[0].reference ? ' · Ref: <b>'+xEsc(items[0].reference)+'</b>' : ''}</p>
-        <p class="m">Remaining balance as of ${xDate(today)}: <b>${xMoney(balNow)}</b></p>
-        <div class="sig"><div>Received by${items[0].created_by_email ? '<br><span class="m">'+xEsc(items[0].created_by_email)+'</span>' : ''}</div></div>
-        <p class="m" style="margin-top:18px;">This is an acknowledgement receipt for rent and charges received. It is not a BIR official receipt.</p>
-      </div></body>`;
-    document.getElementById('previewTitle').textContent = 'Receipt ' + no;
-  }catch(e){
-    frame.srcdoc = `<body style="font-family:sans-serif;padding:40px;"><h2>Could not build the receipt</h2><p>${xEsc(e.message||e)}</p></body>`;
-  }
-}
-
-// ---------------------------------------------------------------- OVERLAP CHECK (used by saveContract)
-// Returns active contracts (other than `exceptId`) that hold any of `unitIds`.
-async function xActiveHolders(unitIds, exceptId){
-  const { data, error } = await sb.from('contract_units').select('unit_id, contract_id, contracts!inner(id, status, start_date, renters(name))').in('unit_id', unitIds).eq('contracts.status', 'active');
-  if(error) throw error;
-  const R = await xEnsureRefs();
-  return (data||[]).filter(r=>r.contract_id !== exceptId).map(r=>({ contractId:r.contract_id, unitId:r.unit_id, unit:(R.umap[r.unit_id]||{}).unit_name||'unit',
-    renter:(r.contracts && r.contracts.renters && r.contracts.renters.name)||'another renter', start:r.contracts && r.contracts.start_date }));
-}
-
-function xBackToHist(){ openPaidHistory(lastHistOpts); }
-</script>
 </body>
 </html>
