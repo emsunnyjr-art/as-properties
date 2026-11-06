@@ -5867,25 +5867,31 @@ async function loadRemindCard(){
   }
   remindRender();
 }
+function remindRowHtml(g, sent){
+  const s = sent.has(g.contract_id);
+  const status = g.worst > 0 ? `<span style="color:var(--bad);">${g.worst} day${g.worst===1?'':'s'} late</span>` : (g.worst === 0 ? '<b>due today</b>' : `due in ${-g.worst} day${g.worst===-1?'':'s'}`);
+  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid rgba(255,255,255,.08);${s?'opacity:.5;':''}">
+    <div style="min-width:0;"><b>${bulkEsc(g.name)}</b> <span class="muted">${bulkEsc(g.building||'')} ${bulkEsc(g.unit||'')}</span><br>
+      <span style="font-size:13px;">${fmtMoney(g.total)} · ${g.items.length} item${g.items.length===1?'':'s'} · ${status}</span></div>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button class="btn small" onclick="remindOpen('${g.contract_id}')">Send</button>
+      <label style="display:flex;align-items:center;gap:4px;font-size:13px;margin:0;"><input type="checkbox" style="width:auto;" ${s?'checked':''} onchange="remindTick('${g.contract_id}', this.checked)"> Sent</label>
+    </div></div>`;
+}
 function remindRender(){
   const el = document.getElementById('remindCard');
   const sent = remindSentSet();
-  if(!remindRows.length){ el.innerHTML = `<div class="card"><p class="section-title">Remind today</p><p class="muted">Nobody needs a reminder right now (nothing due within 5 days or overdue).</p></div>`; return; }
-  const done = remindRows.filter(g=>sent.has(g.contract_id)).length;
+  const rows = remindRows.filter(g=>g.items.some(i=>i.off >= -3));
+  const win = rows.filter(g=>g.items.some(i=>i.off >= -3 && i.off <= 3));
+  const old = rows.filter(g=>!win.includes(g));
+  if(!rows.length){ el.innerHTML = `<div class="card"><p class="section-title">Collect this week</p><p class="muted">Nothing due from 3 days ago to 3 days ahead, and nothing overdue.</p></div>`; return; }
+  const done = win.filter(g=>sent.has(g.contract_id)).length;
+  const tot = win.reduce((t,g)=>t+g.total,0);
   el.innerHTML = `<div class="card" style="border-color:var(--accent);">
-    <p class="section-title" style="margin-bottom:2px;">Remind today <span class="muted" style="font-weight:400;font-size:13px;">— ${done} of ${remindRows.length} sent by you today</span></p>
-    <p class="muted" style="margin-top:0;">SMS and email already go out automatically every morning. Use this list for Viber or Messenger: tap Send, pick the app, then tick "Sent" so you can see who is left.</p>
-    ${remindRows.map(g=>{
-      const s = sent.has(g.contract_id);
-      const status = g.worst > 0 ? `<span style="color:var(--bad);">${g.worst} day${g.worst===1?'':'s'} late</span>` : (g.worst === 0 ? 'due today' : `due in ${-g.worst} day${g.worst===-1?'':'s'}`);
-      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid rgba(255,255,255,.08);${s?'opacity:.5;':''}">
-        <div style="min-width:0;"><b>${bulkEsc(g.name)}</b> <span class="muted">${bulkEsc(g.building||'')} ${bulkEsc(g.unit||'')}</span><br>
-          <span style="font-size:13px;">${fmtMoney(g.total)} · ${g.items.length} item${g.items.length===1?'':'s'} · ${status}</span></div>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <button class="btn small" onclick="remindOpen('${g.contract_id}')">Send</button>
-          <label style="display:flex;align-items:center;gap:4px;font-size:13px;margin:0;"><input type="checkbox" style="width:auto;" ${s?'checked':''} onchange="remindTick('${g.contract_id}', this.checked)"> Sent</label>
-        </div></div>`;
-    }).join('')}
+    <p class="section-title" style="margin-bottom:2px;">Collect this week <span class="muted" style="font-weight:400;font-size:13px;">— 3 days back to 3 days ahead · ${win.length} renter${win.length===1?'':'s'} · ${fmtMoney(tot)} · ${done} sent by you today</span></p>
+    <p class="muted" style="margin-top:0;">SMS and email go out automatically at 6 AM on the day 3 before, due day, 1 and 3 days late, then weekly. For Viber or Messenger: tap Send, pick the app, then tick "Sent".</p>
+    ${win.map(g=>remindRowHtml(g, sent)).join('') || '<p class="muted">Nobody in this window.</p>'}
+    ${old.length ? `<p class="section-title" style="margin:14px 0 2px;font-size:15px;color:var(--bad);">Overdue more than 3 days (${old.length})</p>${old.map(g=>remindRowHtml(g, sent)).join('')}` : ''}
   </div>`;
 }
 function remindTick(cid, on){ const s = remindSentSet(); if(on) s.add(cid); else s.delete(cid); remindSentSave(s); remindRender(); }
