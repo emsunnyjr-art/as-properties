@@ -660,6 +660,10 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
           <div><label>Paid through</label><select id="bulkMethod"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="maya">Maya</option><option value="bank">Bank transfer</option><option value="other">Other</option></select></div>
           <div><label>Reference / note (optional)</label><input id="bulkRef" placeholder="e.g. bulk cash collection"></div>
         </div>
+        <div class="row">
+          <div><label>📎 Receipt / proof (photo or PDF, attached to every line)</label><input id="bulkReceipt" type="file" accept=".pdf,image/*"></div>
+          <div><label>…or proof link (optional)</label><input id="bulkLink" placeholder="link to the bulk proof images"></div>
+        </div>
         <div id="bulkList" style="margin-top:10px;"></div>
         <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
           <button class="btn" id="bulkSaveBtn" onclick="bulkSave()" disabled>Record payments</button>
@@ -4538,6 +4542,7 @@ async function loadItemizedBill(){
         <div><label>Paid through</label><select id="itemizedMethod"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="maya">Maya</option><option value="bank">Bank transfer</option><option value="other">Other</option></select></div>
         <div><label>Reference no. (optional)</label><input id="itemizedRef" placeholder="GCash / bank reference"></div>
         <div><label>Receipt / screenshot (optional, attached to rent line items)</label><input id="itemizedReceipt" type="file" accept=".pdf,image/*"></div>
+        <div><label>…or proof link (optional)</label><input id="itemizedLink" placeholder="link to the proof images"></div>
       </div>
       <button class="btn" onclick="collectItemizedBill('${contractId}')">Collect Payment</button>
       <button class="btn secondary" onclick="sendItemizedBill('${contractId}')">📤 Send itemized bill</button>
@@ -4634,7 +4639,8 @@ async function collectItemizedBill(contractId){
       p_received_date: received,
       p_method: document.getElementById('itemizedMethod').value,
       p_reference: document.getElementById('itemizedRef').value,
-      p_receipt_path: receiptPath, p_receipt_name: receiptName
+      p_receipt_path: receiptPath, p_receipt_name: receiptName,
+      p_note: proofNote('Itemized bill', (document.getElementById('itemizedLink')?.value||'').trim())
     });
     if(error){ alert('Nothing was saved. ' + error.message); return; }
     doneN += data.lines; doneAmt += Number(data.total);
@@ -4643,7 +4649,7 @@ async function collectItemizedBill(contractId){
     const amt = payOf(it);
     const { error } = await sb.rpc('record_payment', { p_rent_payment_id: it.id, p_amount: amt, p_received_date: received,
       p_method: document.getElementById('itemizedMethod').value, p_reference: document.getElementById('itemizedRef').value,
-      p_note: 'Part-payment from itemized bill', p_receipt_path: receiptPath, p_receipt_name: receiptName });
+      p_note: proofNote('Part-payment from itemized bill', (document.getElementById('itemizedLink')?.value||'').trim()), p_receipt_path: receiptPath, p_receipt_name: receiptName });
     if(error){ alert(`Saved ${doneN} so far, then stopped at "${it.label}": ${error.message}`); loadItemizedBill(); loadPaymentSchedule(); loadDashboard(); return; }
     doneN++; doneAmt += amt;
   }
@@ -4693,6 +4699,7 @@ function rpPeriodLabel(r){
 }
 function rpRender(){
   const ov = document.getElementById('renterPayOverlay');
+  const keepFile = document.getElementById('rpReceipt'), keepLink = document.getElementById('rpLink')?.value || '';
   const h = window._rpHead || {};
   const today = manilaToday();
   ov.innerHTML = `
@@ -4721,14 +4728,34 @@ function rpRender(){
       <div><label>Paid through</label><select id="rpMethod"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="maya">Maya</option><option value="bank">Bank transfer</option><option value="other">Other</option></select></div>
       <div><label>Reference (optional)</label><input id="rpRef" placeholder="GCash / bank reference"></div>
     </div>
+    <div class="row" style="margin-top:6px;">
+      <div><label>📎 Receipt / proof of payment (photo or PDF)</label><input id="rpReceipt" type="file" accept=".pdf,image/*"></div>
+      <div><label>…or proof link (optional)</label><input id="rpLink" placeholder="paste a link to the proof images"></div>
+    </div>
     <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <button class="btn" id="rpSaveBtn" onclick="rpSave()" disabled>Record payment</button>
       <span id="rpTotal" class="muted"></span>
       <button class="btn secondary small" style="margin-left:auto;" onclick="closeRenterPay();openPaymentsForContract('${rpContractId}')">Open full schedule (partial payments)</button>
     </div>
   </div>`;
+  { const nf = document.getElementById('rpReceipt'); if(keepFile && nf) nf.replaceWith(keepFile); const nl = document.getElementById('rpLink'); if(nl) nl.value = keepLink; }
   rpTotals();
 }
+// Proof of payment: optional photo/PDF upload and/or a link (e.g. a Drive/Photos folder with the bulk proof images).
+async function proofCollect(fileId, linkId, folder){
+  let path = null, name = null;
+  const f = document.getElementById(fileId)?.files?.[0];
+  if(f){
+    const pth = `payments/${folder}/${Date.now()}-${f.name}`;
+    const { error } = await sb.storage.from('contract-files').upload(pth, f);
+    if(error){ if(!confirm('The proof could not be uploaded (' + error.message + '). Record the payment without it?')) return { cancel:true }; }
+    else { path = pth; name = f.name; }
+  }
+  const link = (document.getElementById(linkId)?.value || '').trim();
+  return { path, name, link, cancel:false };
+}
+const proofNote = (base, link) => link ? `${base} · Proof: ${link}` : base;
+function proofClear(fileId, linkId){ const f=document.getElementById(fileId), l=document.getElementById(linkId); if(f) f.value=''; if(l) l.value=''; }
 async function rpPart(i){
   const r = rpRows[i]; if(!r) return;
   const date = document.getElementById('rpDate').value;
@@ -4738,14 +4765,18 @@ async function rpPart(i){
   const amt = Number(String(v).replace(/[₱,\s]/g,''));
   if(!(amt > 0)) return alert('Enter an amount above zero.');
   if(amt > r.balance + 0.004) return alert('That is more than this month\'s balance of ' + fmtMoney(r.balance) + '.');
+  const pf = await proofCollect('rpReceipt','rpLink', rpContractId); if(pf.cancel) return;
   const { error } = await sb.rpc('record_payment', {
     p_rent_payment_id: r.payment_id, p_amount: amt, p_received_date: date,
     p_method: document.getElementById('rpMethod').value,
     p_reference: document.getElementById('rpRef').value,
-    p_note: 'Part-payment recorded from dashboard'
+    p_receipt_path: pf.path, p_receipt_name: pf.name,
+    p_note: proofNote('Part-payment recorded from dashboard', pf.link)
   });
   if(error) return alert('Nothing was saved: ' + error.message);
+  proofClear('rpReceipt','rpLink');
   await rpLoad(); try{ loadDashboard(); }catch(e){}
+  alert(`SAVED: ${fmtMoney(amt)} received for ${rpPeriodLabel(r)}.` + (pf.path ? '\nProof uploaded.' : '') + (r.balance - amt > 0.004 ? `\nStill unpaid: ${fmtMoney(r.balance - amt)}.` : '\nThat month is now fully paid.'));
 }
 function rpToggle(i,on){ rpRows[i].checked = on; rpTotals(); }
 function rpToggleAll(on){ rpRows.forEach(r=>r.checked = on); rpRender(); }
@@ -4766,15 +4797,18 @@ async function rpSave(){
   if(!date || date > manilaToday()){ alert('Choose a date received that is today or earlier.'); return; }
   const total = sel.reduce((s,r)=>s+r.balance,0);
   if(!confirm(`Record ${fmtMoney(total)} received ${fmtDate(date)} from ${window._rpHead?.renter_name||'this renter'} for ${sel.length} month${sel.length===1?'':'s'}?\n\nEach selected month is marked paid in full.`)) return;
+  const pf = await proofCollect('rpReceipt','rpLink', rpContractId); if(pf.cancel) return;
   const b = document.getElementById('rpSaveBtn'); b.disabled = true; b.textContent = 'Saving…';
   const { data, error } = await sb.rpc('record_itemized_payment', {
     p_rent_payment_ids: sel.map(r=>r.payment_id),
     p_received_date: date,
     p_method: document.getElementById('rpMethod').value,
     p_reference: document.getElementById('rpRef').value.trim() || null,
-    p_note: 'Recorded from dashboard'
+    p_receipt_path: pf.path, p_receipt_name: pf.name,
+    p_note: proofNote('Recorded from dashboard', pf.link)
   });
   if(error){ alert('Nothing was saved: ' + error.message); rpLoad(); return; }
+  proofClear('rpReceipt','rpLink');
   rpRows = [];
   await rpLoad();
   loadDashboard();
@@ -5274,21 +5308,23 @@ async function bulkSave(){
   const total = sel.reduce((s,r)=>s+bulkPayOf(r),0);
   const renters = new Set(sel.map(r=>r.renter_name)).size;
   if(!confirm(`Record ${fmtMoney(total)} received ${fmtDate(date)} from ${renters} renter${renters===1?'':'s'}?\n\n${full.length} month${full.length===1?'':'s'} paid in full` + (part.length ? `\n${part.length} part-payment${part.length===1?'':'s'} (the rest stays as balance)` : '') + `\n\nYou can reverse any of them later.`)) return;
+  const pf = await proofCollect('bulkReceipt','bulkLink','bulk'); if(pf.cancel) return;
   const btn = document.getElementById('bulkSaveBtn'); btn.disabled = true; btn.textContent = 'Saving…';
   const method = document.getElementById('bulkMethod').value, ref = document.getElementById('bulkRef').value.trim() || 'Bulk payment update';
   let done = 0, doneAmt = 0;
   if(full.length){
     const { data, error } = await sb.rpc('record_itemized_payment', {
-      p_rent_payment_ids: full.map(r=>r.payment_id), p_received_date: date, p_method: method, p_reference: ref, p_note: 'Bulk payment update'
+      p_rent_payment_ids: full.map(r=>r.payment_id), p_received_date: date, p_method: method, p_reference: ref, p_receipt_path: pf.path, p_receipt_name: pf.name, p_note: proofNote('Bulk payment update', pf.link)
     });
     if(error){ alert('Nothing was saved: ' + error.message); bulkPreview(); return; }
     done += data?.lines ?? full.length; doneAmt += Number(data?.total ?? full.reduce((s,r)=>s+r.balance,0));
   }
   for(const r of part){
-    const { error } = await sb.rpc('record_payment', { p_rent_payment_id: r.payment_id, p_amount: bulkPayOf(r), p_received_date: date, p_method: method, p_reference: ref, p_note: 'Bulk payment update (part-payment)' });
+    const { error } = await sb.rpc('record_payment', { p_rent_payment_id: r.payment_id, p_amount: bulkPayOf(r), p_received_date: date, p_method: method, p_reference: ref, p_receipt_path: pf.path, p_receipt_name: pf.name, p_note: proofNote('Bulk payment update (part-payment)', pf.link) });
     if(error){ alert(`Saved ${done} so far, then stopped at ${r.renter_name} (${fmtDate(r.period_start)}): ${error.message}`); await bulkPreview(); return; }
     done++; doneAmt += bulkPayOf(r);
   }
+  proofClear('bulkReceipt','bulkLink');
   alert(`Recorded ${done} payment${done===1?'':'s'}, ${fmtMoney(doneAmt)}` + (part.length ? ` (${part.length} part-payment${part.length===1?'':'s'}).` : '.'));
   await bulkPreview();
   try{ loadPaymentSchedule(); }catch(e){}
@@ -5349,7 +5385,7 @@ async function togglePaymentHistory(id){
           <td>${PAY_METHOD_LABEL[x.method] || '—'}</td>
           <td>${(x.reference||'—').replace(/</g,'&lt;')}</td>
           <td>${(x.created_by_email||'—').replace(/</g,'&lt;')}<br><span class="muted" style="font-size:11px;">${new Date(x.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'})}</span></td>
-          <td>${(x.note||'').replace(/</g,'&lt;')}</td>
+          <td>${(x.note||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener noreferrer">open link</a>')}</td>
           <td>${x.receipt_path ? `<button class="btn secondary small" onclick="viewStoredFile('${x.receipt_path.replace(/'/g,"\\'")}','Payment receipt')">Receipt</button>` : ''}
               ${(!isRev && !wasRev) ? `<button class="btn danger small" onclick="reversePayment('${x.id}', ${x.amount}, '${id}')">Reverse</button>` : ''}</td>
         </tr>`;
