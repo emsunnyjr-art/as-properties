@@ -691,7 +691,10 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
     <div id="paymentFormPanel"></div>
 
     <div class="card">
-      <p class="section-title">Rent schedule</p>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <p class="section-title" style="margin:0;">Rent schedule</p>
+        <button class="btn secondary small" onclick="setAmountRange()" title="Change the amount due for several unpaid months at once">Fix amount for several months</button>
+      </div>
       <table>
         <thead><tr><th>Period</th><th>Due</th><th>Amount</th><th>Paid</th><th>Balance</th><th>Status</th><th>Receipt</th><th></th></tr></thead>
         <tbody id="scheduleTable"></tbody>
@@ -1071,8 +1074,9 @@ function escalationLabel(c){
   return `+${inc} every ${escalationEveryText(c.escalation_every_months)}`;
 }
 function escalationDateText(c, iso){
-  return (c.rent_period||'monthly')==='monthly' ? fmtMonthYear(iso) : fmtDate(iso);
+  return fmtDateLong(iso);   // always the exact day, month and year
 }
+function fmtDateLong(d){ return d ? new Date(d+'T00:00:00').toLocaleDateString('en-PH',{month:'long', day:'numeric', year:'numeric'}) : '—'; }
 // "Today" in Philippine time (not the UTC date, which is a day behind until 8am)
 function manilaToday(){ return new Intl.DateTimeFormat('en-CA', { timeZone:'Asia/Manila' }).format(new Date()); }
 function todayISO(){ return manilaToday(); }
@@ -1202,7 +1206,7 @@ function advDepCoverText(c, which){
   const dt = which==='advance' ? c.advance_date : c.deposit_date;
   if(!(n > 0)) return '';
   const word = ({monthly:'month', daily:'day', annual:'year'})[c.rent_period || 'monthly'];
-  return ` (covering ${n} ${word}${n===1?'':'s'} of rent${dt ? ', received ' + fmtDate(dt) : ''})`;
+  return ` (covering ${n} ${word}${n===1?'':'s'} of rent${dt ? ', received ' + fmtDateLong(dt) : ''})`;
 }
 function onAdvPeriodsInput(which){
   const rent = parseFloat(document.getElementById('cRent').value) || 0;
@@ -4157,16 +4161,16 @@ async function printContract(id){
   const isDaily = c.rent_period === 'daily';
   const isAnnual = c.rent_period === 'annual';
   const termClause = isDaily
-    ? `The term of this lease shall be for a period of ${c.term_days} day(s), beginning on ${fmtDate(c.start_date)} and ending on ${fmtDate(c.end_date)}.`
+    ? `The term of this lease shall be for a period of ${c.term_days} day(s), beginning on ${fmtDateLong(c.start_date)} and ending on ${fmtDateLong(c.end_date)}.`
     : isAnnual
-    ? `The term of this lease shall be for a period of ${c.term_years} year(s), beginning on ${fmtDate(c.start_date)} and ending on ${fmtDate(c.end_date)}.`
-    : `The term of this lease shall be for a period of ${c.term_months} month(s), beginning on ${fmtDate(c.start_date)} and ending on ${fmtDate(c.end_date)}.`;
+    ? `The term of this lease shall be for a period of ${c.term_years} year(s), beginning on ${fmtDateLong(c.start_date)} and ending on ${fmtDateLong(c.end_date)}.`
+    : `The term of this lease shall be for a period of ${c.term_months} month(s), beginning on ${fmtDateLong(c.start_date)} and ending on ${fmtDateLong(c.end_date)}.`;
 
   const rentWords = numberToWords(c.rent_amount);
   const rentClause = isDaily
     ? `The Lessee shall pay the daily rent of ${rentWords} Pesos (${fmtMoney(c.rent_amount)}), due and payable at the end of each day of use, payable to the Lessor in cash, bank transfer, or any mutually agreed digital platform.`
     : isAnnual
-    ? `The Lessee shall pay the annual rent of ${rentWords} Pesos (${fmtMoney(c.rent_amount)}) as a lump sum, due and payable in full on or before ${fmtDate(c.start_date)} of each year of the term, payable to the Lessor in cash, bank transfer, or any mutually agreed digital platform.`
+    ? `The Lessee shall pay the annual rent of ${rentWords} Pesos (${fmtMoney(c.rent_amount)}) as a lump sum, due and payable in full on or before ${fmtDateLong(c.start_date)} of each year of the term, payable to the Lessor in cash, bank transfer, or any mutually agreed digital platform.`
     : `The Lessee shall pay the monthly rent of ${rentWords} Pesos (${fmtMoney(c.rent_amount)}). The rent shall be due and payable on or before the ${ordinal(c.rent_due_day)} day of every month, payable to the Lessor in cash, bank transfer, or any mutually agreed digital platform.`;
 
   const totalInitial = (Number(c.advance)||0) + (Number(c.deposit)||0);
@@ -5180,6 +5184,7 @@ async function loadPaymentSchedule(){
       <td>
         ${remaining > 0 ? `<button class="btn small" onclick="startRecordPayment('${p.id}', ${remaining})">Record payment</button>` : ''}
         ${Number(p.amount_paid) > 0 ? `<button class="btn danger small" onclick="quickUndoPayment('${p.id}')" title="Reverse the last payment marked on this month">↩ Undo paid</button>` : ''}
+        ${Number(p.amount_paid) === 0 && p.status !== 'waived' ? `<button class="btn secondary small" onclick="editDueAmount('${p.id}', ${Number(p.amount_due)})" title="Change the amount due for this month">✎ Amount</button>` : ''}
         <button class="btn secondary small" onclick="togglePaymentHistory('${p.id}')">History</button>
       </td>
     </tr>
@@ -5221,6 +5226,33 @@ async function togglePaymentHistory(id){
     </table>`;
 }
 
+async function editDueAmount(id, current){
+  const v = prompt('Amount due for this month (₱). Currently ' + fmtMoney(current) + ':', current);
+  if(v === null) return;
+  const n = Number(String(v).replace(/[₱,\s]/g,''));
+  if(!(n >= 0) || v.trim()==='') return alert('Please enter a valid amount.');
+  const { error } = await sb.from('rent_payments').update({ amount_due: n }).eq('id', id).eq('amount_paid', 0);
+  if(error) return alert('Could not change the amount: ' + error.message);
+  await loadPaymentSchedule(); try{ loadDashboard(); }catch(e){}
+}
+async function setAmountRange(){
+  const cid = document.getElementById('payContractSelect').value; if(!cid) return;
+  const { data: rows } = await sb.from('rent_payments').select('id, period_start, amount_due, amount_paid, status').eq('contract_id', cid).order('period_start');
+  const open = (rows||[]).filter(r=>Number(r.amount_paid)===0 && r.status!=='waived' && r.status!=='paid');
+  if(!open.length) return alert('There are no unpaid months to change.');
+  const first = open[0].period_start.slice(0,7), last = open[open.length-1].period_start.slice(0,7);
+  const from = prompt('Change unpaid months FROM (YYYY-MM):', first); if(from===null) return;
+  const to = prompt('…up to and including (YYYY-MM):', from); if(to===null) return;
+  const amt = prompt('New amount due per month (₱):'); if(amt===null) return;
+  const n = Number(String(amt).replace(/[₱,\s]/g,''));
+  if(!(n >= 0) || amt.trim()==='') return alert('Please enter a valid amount.');
+  const ids = open.filter(r=>r.period_start.slice(0,7) >= from && r.period_start.slice(0,7) <= to).map(r=>r.id);
+  if(!ids.length) return alert('No unpaid months fall between ' + from + ' and ' + to + '.');
+  if(!confirm('Set ' + ids.length + ' unpaid month(s) (' + from + ' to ' + to + ') to ' + fmtMoney(n) + ' each?\nMonths with payments are not touched.')) return;
+  const { error } = await sb.from('rent_payments').update({ amount_due: n }).in('id', ids).eq('amount_paid', 0);
+  if(error) return alert('Could not change the amounts: ' + error.message);
+  await loadPaymentSchedule(); try{ loadDashboard(); }catch(e){}
+}
 async function quickUndoPayment(rentPaymentId){
   const { data, error } = await sb.from('payments').select('*').eq('rent_payment_id', rentPaymentId).order('created_at');
   if(error) return alert('Could not load the payments: ' + error.message);
