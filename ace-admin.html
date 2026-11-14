@@ -5177,12 +5177,12 @@ async function loadPaymentSchedule(){
       <td>${fmtDate(p.period_start)} – ${fmtDate(p.period_end)}</td>
       <td>${fmtDate(p.due_date)}</td>
       <td>${fmtMoney(p.amount_due)}</td>
-      <td>${fmtMoney(p.amount_paid)}</td>
+      <td>${fmtMoney(p.amount_paid)}${(()=>{ const due=Number(p.amount_due), paid=Number(p.amount_paid); if(!(due>0) || !(paid>0)) return ''; const pct=Math.min(100, Math.round(paid/due*100)); return `<div title="${pct}% of this month paid" style="margin-top:4px;height:6px;border-radius:3px;background:var(--border,#444);overflow:hidden;min-width:70px;"><div style="width:${pct}%;height:100%;background:${pct>=100?'var(--good,#3fb950)':'var(--accent,#d29922)'};"></div></div><div class="muted" style="font-size:11px;">${pct}% paid</div>`; })()}</td>
       <td>${remaining > 0 ? fmtMoney(remaining) : (Number(p.amount_paid) > Number(p.amount_due)+0.005 ? `<span style="color:var(--bad);font-weight:700;">Over by ${fmtMoney(Number(p.amount_paid)-Number(p.amount_due))}</span>` : '—')}</td>
       <td><span class="badge b-${p.status}">${p.status}</span></td>
       <td>${p.receipt_path ? `<button class="btn secondary small" onclick="viewStoredFile('${p.receipt_path.replace(/'/g,"\\'")}','Payment receipt')">Receipt</button>` : '—'}</td>
       <td>
-        ${remaining > 0 ? `<button class="btn small" onclick="startRecordPayment('${p.id}', ${remaining})">Record payment</button>` : ''}
+        ${remaining > 0 ? `<button class="btn small" onclick="startRecordPayment('${p.id}', ${remaining}, ${Number(p.amount_due)})">${Number(p.amount_paid) > 0 ? 'Pay balance' : 'Pay / part-pay'}</button>` : ''}
         ${Number(p.amount_paid) > 0 ? `<button class="btn danger small" onclick="quickUndoPayment('${p.id}')" title="Reverse the last payment marked on this month">↩ Undo paid</button>` : ''}
         ${Number(p.amount_paid) === 0 && p.status !== 'waived' ? `<button class="btn secondary small" onclick="editDueAmount('${p.id}', ${Number(p.amount_due)})" title="Change the amount due for this month">✎ Amount</button>` : ''}
         <button class="btn secondary small" onclick="togglePaymentHistory('${p.id}')">History</button>
@@ -5274,7 +5274,7 @@ async function reversePayment(paymentId, amount, rentPaymentId){
   loadItemizedBill(); loadDashboard();
 }
 
-function startRecordPayment(id, remaining){
+function startRecordPayment(id, remaining, due){
   document.getElementById('paymentFormPanel').innerHTML = `
     <div class="card" style="border-color:var(--accent);">
       <p class="section-title">Record payment <span class="muted">(balance of this period: ${fmtMoney(remaining)})</span></p>
@@ -5286,6 +5286,9 @@ function startRecordPayment(id, remaining){
         <div><label>Note (optional)</label><input id="payNote"></div>
         <div><label>Receipt / screenshot (optional)</label><input id="payReceipt" type="file" accept=".pdf,image/*"></div>
       </div>
+      <div style="margin:6px 0;display:flex;gap:6px;flex-wrap:wrap;align-items:center;"><span class="muted">Quick amount:</span>
+        ${[25,50,75].map(pc=>{ const a=Math.round((due||remaining)*pc)/100; return a>0 && a<remaining ? `<button type="button" class="btn secondary small" onclick="document.getElementById('payAmount').value=${a}">${pc}% · ${fmtMoney(a)}</button>` : ''; }).join('')}
+        <button type="button" class="btn secondary small" onclick="document.getElementById('payAmount').value=${remaining}">Full balance · ${fmtMoney(remaining)}</button></div>
       <p class="muted">A part-payment is fine: enter what was actually received. The rest stays as the balance.</p>
       <button class="btn" id="paySaveBtn" onclick="savePayment('${id}')">Save payment</button>
       <button class="btn secondary" onclick="document.getElementById('paymentFormPanel').innerHTML=''">Cancel</button>
