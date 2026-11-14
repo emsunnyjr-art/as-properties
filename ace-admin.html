@@ -1244,6 +1244,7 @@ function updateAdvDepHint(){
 
 // ---------- DASHBOARD ----------
 // ---------- UNPAID BALANCE SUMMARY ----------
+function fmtPeriodRange(a,b){ const f=d=>new Date(d+'T00:00:00').toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'}); return a===b ? f(a) : `${f(a)} – ${f(b)}`; }
 function fmtMonthYear(d){ return d ? new Date(d+'T00:00:00').toLocaleDateString(undefined,{month:'short', year:'numeric'}) : '—'; }
 
 function periodUnitLabel(rentPeriod, n){
@@ -1256,7 +1257,7 @@ function periodUnitLabel(rentPeriod, n){
 // "Feb 2026 – Oct 2026" (or a single month/day if first and last are the same)
 function balanceRangeText(b){
   if(!b || !Number(b.periods_unpaid)) return '';
-  const f = b.rent_period === 'daily' ? fmtDate : fmtMonthYear;
+  const f = fmtDate;   // periods start on the contract's own day, so show the exact date
   const from = f(b.first_unpaid_period), to = f(b.last_unpaid_period);
   return from === to ? from : `${from} – ${to}`;
 }
@@ -2643,7 +2644,7 @@ async function showRenterDetailInner(renterId, fromPop){
   const today = manilaToday();
   const dueRows = (openRows||[]).filter(x=>x.due_date <= today), nextRows = (openRows||[]).filter(x=>x.due_date > today).slice(0,3);
   const { data: myProofs } = await sb.from('payment_proofs').select('id').eq('renter_id', renterId).eq('status','pending');
-  const lab = x => x.rent_period === 'monthly' ? new Date(x.period_start+'T00:00:00').toLocaleDateString(undefined,{month:'long', year:'numeric'}) : (x.period_start === x.period_end ? fmtDate(x.period_start) : `${fmtDate(x.period_start)} – ${fmtDate(x.period_end)}`);
+  const lab = x => x.rent_period === 'monthly' ? fmtPeriodRange(x.period_start, x.period_end) : (x.period_start === x.period_end ? fmtDate(x.period_start) : `${fmtDate(x.period_start)} – ${fmtDate(x.period_end)}`);
   const sched = [...dueRows.map(x=>({x, t:'<span class="tag bad">Overdue</span>'})), ...nextRows.map(x=>({x, t:'<span class="tag mute">Upcoming</span>'}))];
   const mainBtn = dueRows.length ? `<button class="btn big" style="width:100%;" onclick="openRenterPay('${dueRows[0].contract_id}')">Record payment</button>`
                 : (myProofs||[]).length ? `<button class="btn big" style="width:100%;" onclick="openProofReview('${myProofs[0].id}')">Review proof</button>` : '';
@@ -3712,7 +3713,7 @@ async function saveContract(){
       if(!splitFrom && !confirm(`${distinctActiveIds.length} existing active ${plural} on the selected unit(s) will be closed out (end date set to ${dayBefore}) and this new one will become current. Continue?`)) return;
       await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore, recover_dues: true }).in('id', distinctActiveIds);
       // the older contract stops billing from the new start date; its earlier dues stay at its own rate
-      await sb.rpc('close_replaced_contract_periods', { p_old_contract_ids: distinctActiveIds, p_new_start: splitFrom ? splitFrom.slice(0,8)+'01' : start_date });
+      await sb.rpc('close_replaced_contract_periods', { p_old_contract_ids: distinctActiveIds, p_new_start: splitFrom || start_date });
     }
 
     const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
@@ -4630,7 +4631,7 @@ async function rpLoad(){
 }
 function rpPeriodLabel(r){
   if((window._rpHead?.rent_period||'monthly') === 'monthly'){
-    return new Date(r.period_start + 'T00:00:00').toLocaleDateString(undefined,{month:'long', year:'numeric'});
+    return fmtPeriodRange(r.period_start, r.period_end);
   }
   return r.period_start === r.period_end ? fmtDate(r.period_start) : `${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}`;
 }
@@ -4844,7 +4845,7 @@ function pvAllocate(){
   pv.left = left;
 }
 function pvLabel(r){
-  if(r.rent_period === 'monthly') return new Date(r.period_start + 'T00:00:00').toLocaleDateString(undefined,{month:'long', year:'numeric'});
+  if(r.rent_period === 'monthly') return fmtPeriodRange(r.period_start, r.period_end);
   return r.period_start === r.period_end ? fmtDate(r.period_start) : `${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}`;
 }
 function pvRender(){
