@@ -4610,7 +4610,7 @@ function rpRender(){
       </div>
       <button class="btn secondary small" onclick="closeRenterPay()">✕ Close</button>
     </div>
-    <p class="muted" style="margin:10px 0 6px 0;">Tick the months that were paid. Tap <strong>up to here</strong> to tick every month from the oldest to that one.</p>
+    <p class="muted" style="margin:10px 0 6px 0;">Tick the months that were paid. Tap <strong>up to here</strong> to tick every month from the oldest to that one. If they paid only part of a month, tap <strong>Part-pay</strong> on that month.</p>
     ${rpRows.length ? `
     <div style="max-height:340px;overflow:auto;"><table>
       <thead><tr><th><input type="checkbox" id="rpAll" onchange="rpToggleAll(this.checked)"></th><th>Month</th><th>Due</th><th>Balance</th><th></th></tr></thead>
@@ -4618,8 +4618,8 @@ function rpRender(){
         <td><input type="checkbox" ${r.checked?'checked':''} onchange="rpToggle(${i},this.checked)"></td>
         <td>${bulkEsc(rpPeriodLabel(r))}${r.status==='partial' ? ' <span class="badge b-partial">partial</span>' : ''}</td>
         <td>${fmtDate(r.due_date)}</td>
-        <td>${fmtMoney(r.balance)}</td>
-        <td><button class="btn secondary small" onclick="rpUpTo(${i})">up to here</button></td></tr>`).join('')}</tbody></table></div>`
+        <td>${fmtMoney(r.balance)}${Number(r.amount_paid)>0 ? `<div class="muted" style="font-size:11px;">${Math.min(100,Math.round(Number(r.amount_paid)/Number(r.amount_due)*100))}% paid</div>` : ''}</td>
+        <td style="white-space:nowrap;"><button class="btn secondary small" onclick="rpUpTo(${i})">up to here</button> <button class="btn secondary small" onclick="rpPart(${i})" title="Record only part of this month">Part-pay</button></td></tr>`).join('')}</tbody></table></div>`
       : '<p class="muted">Nothing unpaid for this renter.</p>'}
     <label style="display:block;margin-top:8px;"><input type="checkbox" ${rpShowUpcoming?'checked':''} onchange="rpShowUpcoming=this.checked;rpLoad()"> also show months not yet due</label>
     <div class="row" style="margin-top:10px;">
@@ -4634,6 +4634,24 @@ function rpRender(){
     </div>
   </div>`;
   rpTotals();
+}
+async function rpPart(i){
+  const r = rpRows[i]; if(!r) return;
+  const date = document.getElementById('rpDate').value;
+  if(!date || date > manilaToday()){ alert('Choose a date received that is today or earlier.'); return; }
+  const v = prompt(`Amount received for ${rpPeriodLabel(r)} (balance ${fmtMoney(r.balance)}):`, '');
+  if(v === null || v.trim() === '') return;
+  const amt = Number(String(v).replace(/[₱,\s]/g,''));
+  if(!(amt > 0)) return alert('Enter an amount above zero.');
+  if(amt > r.balance + 0.004) return alert('That is more than this month\'s balance of ' + fmtMoney(r.balance) + '.');
+  const { error } = await sb.rpc('record_payment', {
+    p_rent_payment_id: r.payment_id, p_amount: amt, p_received_date: date,
+    p_method: document.getElementById('rpMethod').value,
+    p_reference: document.getElementById('rpRef').value,
+    p_note: 'Part-payment recorded from dashboard'
+  });
+  if(error) return alert('Nothing was saved: ' + error.message);
+  await rpLoad(); try{ loadDashboard(); }catch(e){}
 }
 function rpToggle(i,on){ rpRows[i].checked = on; rpTotals(); }
 function rpToggleAll(on){ rpRows.forEach(r=>r.checked = on); rpRender(); }
