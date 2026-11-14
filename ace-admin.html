@@ -1184,7 +1184,7 @@ function onRentPeriodChange(){
 }
 
 // ----- advance / deposit coverage -----
-let editLoadedRent = 0, editLoadedEsc = '';
+let editLoadedRent = 0, editLoadedEsc = '', editLoadedDates = '';
 let advDepLoaded = null;
 function advDepChanged(p){
   const o = advDepLoaded || {};
@@ -3414,6 +3414,7 @@ async function startEditContract(id){
   showCurrentFile('cDepositProofCurrent', c.deposit_proof_path, c.deposit_proof_name, 'Deposit payment proof', 'No proof uploaded yet.');
 
   editLoadedRent = Number(c.rent_amount) || 0;
+  editLoadedDates = [c.start_date, c.term_months, c.term_days, c.term_years, c.rent_due_day].join('|');
   editLoadedEsc = JSON.stringify(readEscalationFromForm());
   document.querySelector('#tab-contracts').scrollIntoView({behavior:'smooth'});
 }
@@ -3562,6 +3563,26 @@ function contractSaveError(error){
   if(/rent_due_day_check/.test(m)) return 'The rent due day must be 1 to 28 until ace-feature-update-31.sql is run in Supabase. Run it to allow 29, 30 and 31, or use a due day of 28 or lower.';
   return 'Error: ' + m;
 }
+// Warn before saving when this contract's dates overlap another contract on the same unit(s).
+// `ignoreIds` = contracts that are being replaced / edited (they get closed out, so they don't count).
+async function contractOverlapOk(unitIds, start, rentPeriod, term, ignoreIds, closesActive){
+  try{
+    let end = rentPeriod==='daily' ? addDaysISO(start, term-1) : rentPeriod==='annual' ? addDaysISO(addMonthsISO(start, term*12), -1) : addDaysISO(addMonthsISO(start, term), -1);
+    const { data: cu } = await sb.from('contract_units').select('contract_id').in('unit_id', unitIds);
+    const ids = [...new Set((cu||[]).map(x=>x.contract_id))].filter(id=>!(ignoreIds||[]).includes(id));
+    if(!ids.length) return true;
+    const { data: cs } = await sb.from('contracts').select('id, status, start_date, end_date, renters(name)').in('id', ids);
+    const today = manilaToday();
+    const clash = (cs||[]).filter(c=>{
+      const effEnd = c.status==='active' ? (c.end_date > today ? c.end_date : today) : c.end_date;
+      if(c.status==='active' && closesActive && c.start_date < start) return false;   // will be closed the day before this one starts
+      return c.start_date <= end && effEnd >= start;
+    });
+    if(!clash.length) return true;
+    const lines = clash.map(c=>`• ${c.renters?.name||'—'}: ${fmtDate(c.start_date)} to ${fmtDate(c.end_date)} (${c.status})`).join('\n');
+    return confirm(`OVERLAP WARNING\n\nThis contract (${fmtDate(start)} to ${fmtDate(end)}) overlaps another contract on the same unit(s):\n\n${lines}\n\nThe same unit would be billed twice for the overlapping days.\n\nOK = save anyway    Cancel = go back and change the dates`);
+  }catch(e){ return true; }
+}
 async function saveContract(){
   const rentPeriod = document.getElementById('cRentPeriod').value;
   { const dd = parseInt(document.getElementById('cDueDay').value); if(rentPeriod === 'monthly' && !(dd >= 1 && dd <= 31)) return alert('Rent due day must be a number from 1 to 31.'); }
@@ -3645,8 +3666,14 @@ async function saveContract(){
   }
 
   if(editingContractId && !splitFrom){
+    if(!(await contractOverlapOk(unitIds, payload.start_date, rentPeriod, termValue, [editingContractId], false))) return;
     const { error } = await sb.from('contracts').update(payload).eq('id', editingContractId);
     if(error) return alert(contractSaveError(error));
+    // dates / due day changed: move the whole schedule with the contract (months, due dates, rent)
+    if([payload.start_date, payload.term_months, payload.term_days, payload.term_years, payload.rent_due_day].join('|') !== editLoadedDates){
+      const { error: rErr } = await sb.rpc('realign_contract_schedule', { p_contract_id: editingContractId });
+      if(rErr) alert('The contract was saved, but its rent schedule could not be re-aligned: ' + rErr.message + '\n\nRun ace-feature-update-46.sql if it says the function does not exist.');
+    }
     await sb.rpc('regenerate_schedule_from_today', { p_contract_id: editingContractId });
     // re-price any period with nothing paid yet so the new escalation shows in rent due
     // Upcoming months always get the new rent. Past dues keep the rate they were billed at, unless this was
@@ -3678,6 +3705,7 @@ async function saveContract(){
     const { data: existingActiveRows } = await sb.from('contracts')
       .select('id, unit_id').in('unit_id', unitIds).eq('status','active');
     const distinctActiveIds = [...new Set([...(existingActiveRows||[]).map(r=>r.id), ...replacedIds])];
+    if(!splitFrom && !(await contractOverlapOk(unitIds, payload.start_date, rentPeriod, termValue, replacedIds, true))) return;
     if(distinctActiveIds.length > 0){
       const dayBefore = addDaysISO(payload.start_date, -1);
       const plural = distinctActiveIds.length > 1 ? 'contracts' : 'contract';
@@ -3689,6 +3717,8 @@ async function saveContract(){
 
     const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
     if(error) return alert(contractSaveError(error));
+    // taking over mid-month from the previous contract: bill only the days from the new start (the old one was cut the day before)
+    if(distinctActiveIds.length > 0) await sb.rpc('prorate_first_period', { p_contract_id: created.id });
     await applyAdvDep(created.id);
     await uploadSignedFileIfSelected(created.id);
     await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', created.id, 'advance_proof_path', 'advance_proof_name');
@@ -3937,9 +3967,16 @@ async function loadContractsTable(){
 }
 
 async function cancelContract(id){
-  if(!confirm('Cancel this contract? End date will be set to today.')) return;
+  const { data: cc } = await sb.from('contracts').select('start_date').eq('id', id).single();
+  const today = manilaToday();
+  const cd = prompt('Cancellation date (YYYY-MM-DD). Rent stops on this date: unpaid months after it are cancelled and that month is pro-rated.', today);
+  if(cd === null) return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(cd.trim()) || isNaN(new Date(cd.trim()+'T00:00:00')) ) return alert('Please type the date like 2026-11-14.');
+  const cancelDate = cd.trim();
+  if(cancelDate > today) return alert('The cancellation date cannot be in the future.');
+  if(cc && cancelDate < cc.start_date) return alert('The cancellation date cannot be before the contract started (' + fmtDate(cc.start_date) + ').');
   const recover = confirm('Do you still want to collect the rent that is unpaid on this contract?\n\nOK = YES, keep the unpaid rent on the overdue list\nCancel = NO, write it off and remove it from all lists\n\n(You can change this later with the Recover dues / Write off dues button.)');
-  const { error } = await sb.from('contracts').update({ status:'cancelled', end_date: manilaToday(), recover_dues: recover }).eq('id', id);
+  const { error } = await sb.from('contracts').update({ status:'cancelled', end_date: cancelDate, recover_dues: recover }).eq('id', id);
   if(error){ alert('Could not cancel: ' + error.message + '\n\nIf it mentions recover_dues, run ace-feature-update-26.sql first.'); return; }
   loadContractsTable(); loadUnitsTable(); loadDashboard();
   try{
