@@ -4512,17 +4512,26 @@ async function loadItemizedBill(){
     <div class="card" style="border-color:var(--accent);">
       <p class="section-title">Itemized bill — collect in one go</p>
       <table>
-        <thead><tr><th></th><th>Item</th><th>Amount</th></tr></thead>
+        <thead><tr><th></th><th>Item</th><th>Amount</th><th>Paying now</th></tr></thead>
         <tbody>
           ${itemizedBillItems.map((it,i)=>`
             <tr>
               <td><input type="checkbox" id="billItem${i}" checked onchange="updateItemizedTotal()" style="width:auto;"></td>
               <td>${it.label}</td>
               <td>${fmtMoney(it.amount)}</td>
+              <td style="white-space:nowrap;">${it.kind==='rent'
+                ? `<input type="number" step="0.01" min="0.01" max="${it.amount}" id="billPay${i}" value="${it.amount}" style="width:110px;" oninput="itemizedPayEdited(${i})"><div class="muted" style="font-size:11px;" id="billPct${i}">in full</div>`
+                : '<span class="muted">in full</span>'}</td>
             </tr>
           `).join('')}
         </tbody>
       </table>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+        <span class="muted">Only received part of it?</span>
+        <input type="number" step="0.01" min="0.01" id="itemizedSpread" placeholder="Amount received (₱)" style="width:170px;">
+        <button class="btn secondary small" type="button" onclick="itemizedSpread()">Apply, oldest month first</button>
+        <button class="btn secondary small" type="button" onclick="itemizedReset()">Reset to full</button>
+      </div>
       <p style="font-size:20px;font-weight:700;margin:12px 0;">Total: <span id="itemizedTotal"></span></p>
       <div class="row">
         <div><label>Date received</label><input id="itemizedDate" type="date" value="${manilaToday()}" max="${manilaToday()}"></div>
@@ -4536,10 +4545,43 @@ async function loadItemizedBill(){
   updateItemizedTotal();
 }
 
+function itemizedPayOf(it, i){
+  if(it.kind !== 'rent') return it.amount;
+  const el = document.getElementById(`billPay${i}`); if(!el) return it.amount;
+  let v = Math.round(Number(el.value)*100)/100;
+  if(!(v > 0)) v = it.amount;
+  return Math.min(v, it.amount);
+}
+function itemizedPayEdited(i){
+  const it = itemizedBillItems[i], v = itemizedPayOf(it, i);
+  document.getElementById(`billItem${i}`).checked = true;
+  updateItemizedTotal();
+}
+function itemizedReset(){
+  itemizedBillItems.forEach((it,i)=>{ const el = document.getElementById(`billPay${i}`); if(el) el.value = it.amount; document.getElementById(`billItem${i}`).checked = true; });
+  const sp = document.getElementById('itemizedSpread'); if(sp) sp.value = '';
+  updateItemizedTotal();
+}
+function itemizedSpread(){
+  let left = Math.round(Number(document.getElementById('itemizedSpread').value)*100)/100;
+  if(!(left > 0)) return alert('Type the amount actually received.');
+  itemizedBillItems.forEach((it,i)=>{
+    const cb = document.getElementById(`billItem${i}`), el = document.getElementById(`billPay${i}`);
+    if(left <= 0.004){ cb.checked = false; return; }
+    if(it.kind === 'rent'){ const v = Math.min(it.amount, left); el.value = v; cb.checked = true; left = Math.round((left - v)*100)/100; }
+    else if(left >= it.amount - 0.004){ cb.checked = true; left = Math.round((left - it.amount)*100)/100; }   // utilities are paid in full or not at all
+    else cb.checked = false;
+  });
+  updateItemizedTotal();
+  if(left > 0.004) alert('That is more than the ticked items need. ' + fmtMoney(left) + ' is left over and was not applied.');
+}
 function updateItemizedTotal(){
   let total = 0;
   itemizedBillItems.forEach((it,i)=>{
-    if(document.getElementById(`billItem${i}`).checked) total += it.amount;
+    const checked = document.getElementById(`billItem${i}`).checked;
+    const pct = document.getElementById(`billPct${i}`);
+    if(pct){ const v = itemizedPayOf(it, i); pct.textContent = v < it.amount-0.004 ? `part-pay · ${Math.round(v/it.amount*100)}% of this balance` : 'in full'; }
+    if(checked) total += itemizedPayOf(it, i);
   });
   document.getElementById('itemizedTotal').textContent = fmtMoney(total);
 }
@@ -4568,9 +4610,11 @@ async function collectItemizedBill(contractId){
   const checked = itemizedBillItems.filter((it,i)=>document.getElementById(`billItem${i}`).checked);
   if(checked.length === 0) return alert('Select at least one item to collect.');
   if(!received) return alert('Enter the date the money was received.');
-  const total = checked.reduce((n,it)=>n+it.amount, 0);
+  const payOf = it => itemizedPayOf(it, itemizedBillItems.indexOf(it));
+  const total = checked.reduce((n,it)=>n+payOf(it), 0);
+  const fullItems = checked.filter(it=>payOf(it) >= it.amount-0.004), partItems = checked.filter(it=>payOf(it) < it.amount-0.004);
   const ci = payContractInfo[document.getElementById('payContractSelect').value] || {};
-  if(!confirm(`Record ${peso(total)} received on ${fmtDate(received)} for ${checked.length} item(s)?\n\nRenter: ${ci.renter||'—'}\nUnit(s): ${ci.units||'—'}`)) return;
+  if(!confirm(`Record ${peso(total)} received on ${fmtDate(received)} for ${checked.length} item(s)?` + (partItems.length ? `\n(${partItems.length} part-payment${partItems.length===1?'':'s'}: the rest stays as balance)` : '') + `\n\nRenter: ${ci.renter||'—'}\nUnit(s): ${ci.units||'—'}`)) return;
 
   let receiptPath = null, receiptName = null;
   const file = document.getElementById('itemizedReceipt').files[0];
@@ -4581,17 +4625,29 @@ async function collectItemizedBill(contractId){
     else { receiptPath = path; receiptName = file.name; }
   }
 
-  // One call, all-or-nothing: either every selected line is recorded or none is.
-  const { data, error } = await sb.rpc('record_itemized_payment', {
-    p_rent_payment_ids: checked.filter(it=>it.kind==='rent').map(it=>it.id),
-    p_utility_ids: checked.filter(it=>it.kind==='utility').map(it=>it.id),
-    p_received_date: received,
-    p_method: document.getElementById('itemizedMethod').value,
-    p_reference: document.getElementById('itemizedRef').value,
-    p_receipt_path: receiptPath, p_receipt_name: receiptName
-  });
-  if(error){ alert('Nothing was saved. ' + error.message); return; }
-  alert(`${peso(data.total)} recorded across ${data.lines} item(s).`);
+  // Lines paid in full: one call, all-or-nothing. Part-payments are recorded one by one afterwards.
+  let doneN = 0, doneAmt = 0;
+  if(fullItems.length){
+    const { data, error } = await sb.rpc('record_itemized_payment', {
+      p_rent_payment_ids: fullItems.filter(it=>it.kind==='rent').map(it=>it.id),
+      p_utility_ids: fullItems.filter(it=>it.kind==='utility').map(it=>it.id),
+      p_received_date: received,
+      p_method: document.getElementById('itemizedMethod').value,
+      p_reference: document.getElementById('itemizedRef').value,
+      p_receipt_path: receiptPath, p_receipt_name: receiptName
+    });
+    if(error){ alert('Nothing was saved. ' + error.message); return; }
+    doneN += data.lines; doneAmt += Number(data.total);
+  }
+  for(const it of partItems){
+    const amt = payOf(it);
+    const { error } = await sb.rpc('record_payment', { p_rent_payment_id: it.id, p_amount: amt, p_received_date: received,
+      p_method: document.getElementById('itemizedMethod').value, p_reference: document.getElementById('itemizedRef').value,
+      p_note: 'Part-payment from itemized bill', p_receipt_path: receiptPath, p_receipt_name: receiptName });
+    if(error){ alert(`Saved ${doneN} so far, then stopped at "${it.label}": ${error.message}`); loadItemizedBill(); loadPaymentSchedule(); loadDashboard(); return; }
+    doneN++; doneAmt += amt;
+  }
+  alert(`${peso(doneAmt)} recorded across ${doneN} item(s)` + (partItems.length ? ` (${partItems.length} part-payment${partItems.length===1?'':'s'}).` : '.'));
   loadItemizedBill(); loadPaymentSchedule(); loadDashboard();
 }
 
