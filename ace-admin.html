@@ -648,7 +648,7 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
         <button class="btn small" id="bulkToggleBtn" onclick="toggleBulkPayment()">⚡ Bulk payment update</button>
       </div>
       <div id="bulkBody" class="hidden">
-        <p class="muted">Mark many unpaid rent periods as received in one click. Pick who and how far, review the list, untick anything not paid, then confirm. Every line is saved in the payment history (all or nothing) and can be reversed.</p>
+        <p class="muted">Mark many unpaid rent periods as received in one click. Pick who and how far, review the list, untick anything not paid, and type a smaller amount under <strong>Paying now</strong> for a part-payment (the % of the month shows beside it), then confirm. Every line is saved in the payment history (all or nothing) and can be reversed.</p>
         <div class="row">
           <div><label>Location</label><select id="bulkLocation" onchange="bulkLocChanged()"><option value="">All locations</option></select></div>
           <div><label>Building</label><select id="bulkBuilding" onchange="bulkPreview()"><option value="">All buildings</option></select></div>
@@ -5138,22 +5138,34 @@ function bulkRender(){
   if(!vis.length){ list.innerHTML = '<p class="muted">Nothing unpaid for this selection.</p>'; bulkTotals(); return; }
   const nRent = new Set(vis.map(r=>r.renter_name)).size;
   list.innerHTML = `<p class="muted" style="margin:0 0 6px;">${vis.length} unpaid month${vis.length===1?'':'s'} · ${nRent} renter${nRent===1?'':'s'} · only months already past due are ticked — tick a not-yet-due month yourself if it was paid early (scroll for the rest, or search a name)</p><div style="max-height:65vh;overflow:auto;"><table>
-    <thead><tr><th><input type="checkbox" id="bulkAll" checked onchange="bulkToggleAll(this.checked)"></th><th>Renter</th><th>Unit</th><th>Period</th><th>Balance</th></tr></thead>
+    <thead><tr><th><input type="checkbox" id="bulkAll" checked onchange="bulkToggleAll(this.checked)"></th><th>Renter</th><th>Unit</th><th>Period</th><th>Balance</th><th>Paying now</th></tr></thead>
     <tbody>${vis.map(r=>`<tr>
       <td><input type="checkbox" ${r.checked?'checked':''} onchange="bulkToggle('${r.payment_id}',this.checked)"></td>
       <td>${bulkEsc(r.renter_name)}</td>
       <td>${bulkEsc(r.unit_name||'—')}<br><span class="muted">${bulkEsc(r.building_name||'')}</span></td>
       <td>${fmtDate(r.period_start)}</td>
-      <td>${fmtMoney(r.balance)}</td></tr>`).join('')}</tbody></table></div>`;
+      <td>${fmtMoney(r.balance)}${Number(r.amount_paid)>0 ? `<div class="muted" style="font-size:11px;">${Math.min(100,Math.round(Number(r.amount_paid)/Number(r.amount_due)*100))}% already paid</div>` : ''}</td>
+      <td style="white-space:nowrap;"><input type="number" step="0.01" min="0.01" max="${r.balance}" value="${bulkPayOf(r)}" style="width:100px;" onchange="bulkPay('${r.payment_id}',this)"><div class="muted" style="font-size:11px;" id="bp-${r.payment_id}">${bulkPctText(r)}</div></td></tr>`).join('')}</tbody></table></div>`;
   document.getElementById('bulkAll').checked = vis.every(r=>r.checked);
   bulkTotals();
+}
+function bulkPayOf(r){ return r.pay!=null ? r.pay : r.balance; }
+function bulkPctText(r){ const due=Number(r.amount_due)||0; if(!(due>0)) return ''; const now=Number(r.amount_paid)+bulkPayOf(r); const pct=Math.min(100,Math.round(now/due*100)); return bulkPayOf(r) < r.balance-0.004 ? `part-pay → ${pct}% of month` : 'in full'; }
+function bulkPay(id, el){
+  const r = bulkRows.find(x=>x.payment_id===id); if(!r) return;
+  let v = Math.round(Number(el.value)*100)/100;
+  if(!(v > 0)) v = r.balance;
+  if(v > r.balance) v = r.balance;
+  r.pay = v; r.checked = true; el.value = v;
+  document.getElementById('bp-'+id).textContent = bulkPctText(r);
+  bulkRender();
 }
 function bulkToggle(id, on){ const r = bulkRows.find(x=>x.payment_id===id); if(r) r.checked = on; document.getElementById('bulkAll').checked = bulkVisible().every(r=>r.checked); bulkTotals(); }
 function bulkToggleAll(on){ bulkVisible().forEach(r=>r.checked = on); bulkRender(); }
 function bulkSelected(){ return bulkVisible().filter(r=>r.checked); }
 function bulkTotals(){
   const sel = bulkSelected();
-  const total = sel.reduce((s,r)=>s+r.balance,0);
+  const total = sel.reduce((s,r)=>s+bulkPayOf(r),0);
   document.getElementById('bulkTotal').textContent = sel.length ? `${sel.length} period${sel.length===1?'':'s'} · ${fmtMoney(total)}` : '';
   const btn = document.getElementById('bulkSaveBtn');
   btn.disabled = !sel.length;
@@ -5164,19 +5176,26 @@ async function bulkSave(){
   if(!sel.length) return;
   const date = document.getElementById('bulkDate').value;
   if(!date || date > manilaToday()){ alert('Choose a date received that is today or earlier.'); return; }
-  const total = sel.reduce((s,r)=>s+r.balance,0);
+  const full = sel.filter(r=>bulkPayOf(r) >= r.balance-0.004), part = sel.filter(r=>bulkPayOf(r) < r.balance-0.004);
+  const total = sel.reduce((s,r)=>s+bulkPayOf(r),0);
   const renters = new Set(sel.map(r=>r.renter_name)).size;
-  if(!confirm(`Record ${sel.length} payment${sel.length===1?'':'s'} totalling ${fmtMoney(total)} from ${renters} renter${renters===1?'':'s'}, received ${fmtDate(date)}?\n\nEach one is marked paid in full. You can reverse any of them later.`)) return;
+  if(!confirm(`Record ${fmtMoney(total)} received ${fmtDate(date)} from ${renters} renter${renters===1?'':'s'}?\n\n${full.length} month${full.length===1?'':'s'} paid in full` + (part.length ? `\n${part.length} part-payment${part.length===1?'':'s'} (the rest stays as balance)` : '') + `\n\nYou can reverse any of them later.`)) return;
   const btn = document.getElementById('bulkSaveBtn'); btn.disabled = true; btn.textContent = 'Saving…';
-  const { data, error } = await sb.rpc('record_itemized_payment', {
-    p_rent_payment_ids: sel.map(r=>r.payment_id),
-    p_received_date: date,
-    p_method: document.getElementById('bulkMethod').value,
-    p_reference: document.getElementById('bulkRef').value.trim() || 'Bulk payment update',
-    p_note: 'Bulk payment update'
-  });
-  if(error){ alert('Nothing was saved: ' + error.message); bulkPreview(); return; }
-  alert(`Recorded ${data?.lines ?? sel.length} payments, ${fmtMoney(data?.total ?? total)}.`);
+  const method = document.getElementById('bulkMethod').value, ref = document.getElementById('bulkRef').value.trim() || 'Bulk payment update';
+  let done = 0, doneAmt = 0;
+  if(full.length){
+    const { data, error } = await sb.rpc('record_itemized_payment', {
+      p_rent_payment_ids: full.map(r=>r.payment_id), p_received_date: date, p_method: method, p_reference: ref, p_note: 'Bulk payment update'
+    });
+    if(error){ alert('Nothing was saved: ' + error.message); bulkPreview(); return; }
+    done += data?.lines ?? full.length; doneAmt += Number(data?.total ?? full.reduce((s,r)=>s+r.balance,0));
+  }
+  for(const r of part){
+    const { error } = await sb.rpc('record_payment', { p_rent_payment_id: r.payment_id, p_amount: bulkPayOf(r), p_received_date: date, p_method: method, p_reference: ref, p_note: 'Bulk payment update (part-payment)' });
+    if(error){ alert(`Saved ${done} so far, then stopped at ${r.renter_name} (${fmtDate(r.period_start)}): ${error.message}`); await bulkPreview(); return; }
+    done++; doneAmt += bulkPayOf(r);
+  }
+  alert(`Recorded ${done} payment${done===1?'':'s'}, ${fmtMoney(doneAmt)}` + (part.length ? ` (${part.length} part-payment${part.length===1?'':'s'}).` : '.'));
   await bulkPreview();
   try{ loadPaymentSchedule(); }catch(e){}
   try{ loadDashboard(); }catch(e){}
