@@ -3614,16 +3614,42 @@ async function saveContract(){
   const { data: unitRows } = await sb.from('units').select('id, unit_name').in('id', unitIds);
   const unitNamesJoined = (unitRows||[]).map(u=>u.unit_name).join(', ');
 
-  if(editingContractId){
+  // A rent change on a lease that has already been billed: keep the old lease (and its dues at the old rent)
+  // in History and start a new lease at the new rent. The person can instead say it is a correction.
+  let splitFrom = null, correctionOfRent = false, replacedIds = [];
+  if(editingContractId && rentPeriod === 'monthly' && Number(payload.rent_amount) !== editLoadedRent){
+    const { data: oldC } = await sb.from('contracts').select('id, end_date, rent_amount').eq('id', editingContractId).single();
+    const { data: nextRows } = await sb.from('rent_payments').select('due_date, period_start').eq('contract_id', editingContractId)
+      .gte('due_date', manilaToday()).not('status','in','(paid,waived)').order('due_date').limit(1);
+    const { data: pastRows } = await sb.from('rent_payments').select('id').eq('contract_id', editingContractId).lt('due_date', manilaToday()).limit(1);
+    if(oldC && (pastRows||[]).length){
+      const eff = (nextRows && nextRows[0]) ? nextRows[0].due_date : addDaysISO(manilaToday(), 1);
+      const ok = confirm(`The rent changed from ${fmtMoney(editLoadedRent)} to ${fmtMoney(payload.rent_amount)}.\n\n` +
+        `OK = START A NEW CONTRACT at ${fmtMoney(payload.rent_amount)} from ${fmtDate(eff)}. The current contract stays in History, with its dues kept at ${fmtMoney(editLoadedRent)}.\n\n` +
+        `Cancel = this is only a correction of the same contract: every month with nothing paid yet is re-priced to ${fmtMoney(payload.rent_amount)}.`);
+      if(ok){
+        splitFrom = eff;
+        // new contract runs from the effective date to the old contract's end date
+        const a = new Date(eff+'T00:00:00'), z = new Date(oldC.end_date+'T00:00:00');
+        let n = 1; while(n < 600){ const e = new Date(a); e.setMonth(e.getMonth()+n); e.setDate(e.getDate()-1); if(e >= z) break; n++; }
+        payload.start_date = eff; payload.term_months = n; payload.term_days = null; payload.term_years = null;
+        payload.rent_due_day = parseInt(eff.slice(8,10)) || payload.rent_due_day;
+        payload.advance_periods = 0; payload.deposit_periods = 0;      // advance / deposit were already applied to the old contract
+        replacedIds = [editingContractId];
+      } else correctionOfRent = true;
+    } else correctionOfRent = true;   // nothing billed yet: just re-price
+  }
+
+  if(editingContractId && !splitFrom){
     const { error } = await sb.from('contracts').update(payload).eq('id', editingContractId);
     if(error) return alert(contractSaveError(error));
     await sb.rpc('regenerate_schedule_from_today', { p_contract_id: editingContractId });
     // re-price any period with nothing paid yet so the new escalation shows in rent due
-    // Only upcoming periods get the new rent. Past dues keep the rate they were billed at,
-    // unless only the escalation terms changed (then past unpaid periods are re-priced too).
+    // Upcoming months always get the new rent. Past dues keep the rate they were billed at, unless this was
+    // confirmed as a correction (or only the escalation terms changed): then unpaid past months are re-priced too.
     const escChanged = JSON.stringify(readEscalationFromForm()) !== editLoadedEsc;
     const rentChanged = Number(payload.rent_amount) !== editLoadedRent;
-    await sb.rpc('apply_escalation_to_unpaid', { p_contract_id: editingContractId, p_include_past: escChanged && !rentChanged });
+    await sb.rpc('apply_escalation_to_unpaid', { p_contract_id: editingContractId, p_include_past: correctionOfRent || (escChanged && !rentChanged) });
     if(advDepChanged(payload)) await applyAdvDep(editingContractId);
     await uploadSignedFileIfSelected(editingContractId);
     await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', editingContractId, 'advance_proof_path', 'advance_proof_name');
@@ -3647,14 +3673,14 @@ async function saveContract(){
     // kept on file, not deleted, the day before this one starts.
     const { data: existingActiveRows } = await sb.from('contracts')
       .select('id, unit_id').in('unit_id', unitIds).eq('status','active');
-    const distinctActiveIds = [...new Set((existingActiveRows||[]).map(r=>r.id))];
+    const distinctActiveIds = [...new Set([...(existingActiveRows||[]).map(r=>r.id), ...replacedIds])];
     if(distinctActiveIds.length > 0){
-      const dayBefore = addDaysISO(start_date, -1);
+      const dayBefore = addDaysISO(payload.start_date, -1);
       const plural = distinctActiveIds.length > 1 ? 'contracts' : 'contract';
-      if(!confirm(`${distinctActiveIds.length} existing active ${plural} on the selected unit(s) will be closed out (end date set to ${dayBefore}) and this new one will become current. Continue?`)) return;
+      if(!splitFrom && !confirm(`${distinctActiveIds.length} existing active ${plural} on the selected unit(s) will be closed out (end date set to ${dayBefore}) and this new one will become current. Continue?`)) return;
       await sb.from('contracts').update({ status:'cancelled', end_date: dayBefore, recover_dues: true }).in('id', distinctActiveIds);
       // the older contract stops billing from the new start date; its earlier dues stay at its own rate
-      await sb.rpc('close_replaced_contract_periods', { p_old_contract_ids: distinctActiveIds, p_new_start: start_date });
+      await sb.rpc('close_replaced_contract_periods', { p_old_contract_ids: distinctActiveIds, p_new_start: splitFrom ? splitFrom.slice(0,8)+'01' : start_date });
     }
 
     const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
@@ -3664,6 +3690,7 @@ async function saveContract(){
     await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', created.id, 'advance_proof_path', 'advance_proof_name');
     await uploadFileToTable('cDepositProof', 'contracts', 'contracts', 'id', created.id, 'deposit_proof_path', 'deposit_proof_name');
     await sb.from('contract_units').insert(unitIds.map(uid=>({ contract_id: created.id, unit_id: uid })));
+    if(splitFrom) cancelEditContract();
 
     const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
     const newMsg = await buildNotifyMessage('new', renter?.name||'', unitNamesJoined, created);
