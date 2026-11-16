@@ -1386,6 +1386,7 @@ async function loadEndingLeases(){
   card.classList.toggle('hidden', rows.length===0);
   document.getElementById('endingCount').innerHTML = rows.length ? `<span class="badge b-expiring">${rows.length}</span>` : '';
   const dayMs = 86400000;
+  const places = await contractPlaces(rows.map(c=>c.id));
   document.getElementById('endingList').innerHTML = rows.map(c=>{
     const days = Math.round((new Date(c.end_date+'T00:00:00Z') - new Date(today+'T00:00:00Z'))/dayMs);
     const units = (c.contract_units||[]).map(x=>x.units?.unit_name).filter(Boolean).join(', ');
@@ -1395,7 +1396,7 @@ async function loadEndingLeases(){
                      : ['b-expiring', `${days} days left`];
     return `<div class="hcard">
       <div class="top"><div class="nm">${bulkEsc(c.renters?.name||'—')}</div><span class="badge ${cls}">${txt}</span></div>
-      <div class="sub">${bulkEsc(units||'—')} · ${fmtMoney(c.rent_amount)} ${bulkEsc(c.rent_period||'')} · ends ${fmtDate(c.end_date)}</div>
+      <div class="sub">${places[c.id] ? '📍 ' + bulkEsc(places[c.id]) + '<br>' : ''}${bulkEsc(units||'—')} · ${fmtMoney(c.rent_amount)} ${bulkEsc(c.rent_period||'')} · ends ${fmtDate(c.end_date)}</div>
       <div class="acts">${c.renters?.contact_number ? `<a class="lnkbtn" href="${smsHref(c.renters.contact_number, 'Hi '+(c.renters?.name||'')+', your lease ends on '+fmtDateLong(c.end_date)+'. Please let us know if you would like to renew.')}">Message</a>` : '<span></span>'}
         <button class="btn secondary big" onclick="openRenterPay('${c.id}')">Open</button></div></div>`;
   }).join('');
@@ -1459,11 +1460,12 @@ async function loadDashboard(){
     const top = dashStat.balances.slice().sort((a,b)=>Number(b.balance)-Number(a.balance));
     oc.classList.toggle('hidden', top.length === 0);
     document.getElementById('overdueSeeAll').textContent = top.length > 3 ? `See all ${top.length}` : '';
+    const places = await contractPlaces(top.slice(0,3).map(r=>r.contract_id));
     document.getElementById('overdueCards').innerHTML = top.slice(0,3).map(r=>{
       const n = Number(r.periods_unpaid), ctx = balanceContextMap[r.contract_id] || {};
       return `<div class="hcard">
         <div class="top"><div class="nm">${bulkEsc(r.renter_name)}</div><div class="amt" style="color:var(--bad);">${fmtMoney(r.balance)}</div></div>
-        <div class="sub">${bulkEsc(r.unit_names||'—')} · ${n} ${periodUnitLabel(r.rent_period, n)} unpaid</div>
+        <div class="sub">${places[r.contract_id] ? '📍 ' + bulkEsc(places[r.contract_id]) + '<br>' : ''}${bulkEsc(r.unit_names||'—')} · ${n} ${periodUnitLabel(r.rent_period, n)} unpaid</div>
         <div class="acts">
           ${r.contact_number ? `<a class="lnkbtn" href="${smsHref(r.contact_number, ctx.msg||'')}">Message</a>` : '<span></span>'}
           <button class="btn big" onclick="openRenterPay('${r.contract_id}')">Record payment</button>
@@ -5184,6 +5186,15 @@ async function statContractBuildings(ids){
     const { data } = await sb.from('contract_units').select('contract_id, units(building_id)').in('contract_id', ids.slice(i,i+200));
     (data||[]).forEach(r=>{ if(!out[r.contract_id] && r.units) out[r.contract_id] = r.units.building_id; });
   }
+  return out;
+}
+async function contractPlaces(ids){
+  const R = await statEnsureRefs(), m = await statContractBuildings(ids), out = {};
+  ids.forEach(id=>{
+    const b = R.bmap[m[id]]; if(!b) return;
+    const loc = (R.locs.find(l=>l.id===b.location_id)||{}).name || '';
+    out[id] = [loc, b.name].filter(Boolean).join(' · ');
+  });
   return out;
 }
 async function statBuildRows(kind){
