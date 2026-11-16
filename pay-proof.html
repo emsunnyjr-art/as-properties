@@ -50,6 +50,7 @@ const SUPABASE_URL = "https://izpaskyqsozpgfgnmlqu.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_7rT5LFITgGrwZwCgy_2VMQ_nUJrxmmU";
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const TOKEN = new URLSearchParams(location.search).get('t') || '';
+const BILL = (new URLSearchParams(location.search).get('b') || '').split(',').filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x));   // period starts of the bill the lessor sent
 
 // ---- receipt reading helpers (shared by the page and the tests) ----
 var MONTHS = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
@@ -210,8 +211,15 @@ function render(){
       ${months.length ? `<details><summary>Show the ${months.length} unpaid month${months.length===1?'':'s'}</summary><table>${months.map(m=>`<tr><td>${esc(monthLabel(m))}${m.units?`<br><span class="muted">${esc(m.units)}</span>`:''}</td><td style="text-align:right">${peso(m.balance)}</td></tr>`).join('')}</table></details>` : ''}
     </div>
 
+    ${(()=>{
+      if(!BILL.length) return '';
+      const rows = (INFO.all_months||[]).filter(m=>BILL.indexOf(m.start)>=0);
+      if(!rows.length) return '';
+      const tot = rows.reduce((t,m)=>t+Number(m.balance||0),0);
+      return `<div class="card" style="border-color:var(--brand)"><b>Your bill</b><table>${rows.map(m=>`<tr><td>${esc(monthLabel(m))}</td><td style="text-align:right">${peso(m.balance)}</td></tr>`).join('')}</table><p style="margin:8px 0 0"><b>Total ${peso(tot)}</b></p></div>`;
+    })()}
     ${(INFO.methods||[]).length ? `<div class="card"><b>Where to pay</b>
-      ${(INFO.methods).map(m=>`<div class="method"><div><b>${esc(m.label)}</b><br><span class="muted">${esc(m.account_name||'')}</span><br>${esc(m.account_number||'')}</div>${m.account_number?`<button class="secondary small" data-copy="${esc(m.account_number)}">Copy</button>`:''}</div>`).join('')}
+      ${(INFO.methods).map(m=>`<div class="method"><div><b>${esc(m.label)}</b><br><span class="muted">${esc(m.account_name||'')}</span><br>${esc(m.account_number||'')}</div>${m.account_number?`<button class="secondary small" data-copy="${esc(m.account_number)}">Copy</button>`:''}</div>${m.qr?`<div style="text-align:center;margin:6px 0 10px"><img src="${esc(m.qr)}" alt="QR code" style="max-width:240px;width:100%;border-radius:8px;border:1px solid var(--line)"><div class="muted" style="font-size:13px">Scan with your ${esc(m.label)} app</div></div>`:''}`).join('')}
       <p class="muted" style="margin-bottom:0">Pay first, then send your receipt below.</p></div>` : ''}
 
     <div class="card" id="sendCard">
@@ -385,7 +393,7 @@ async function send(typed){
     p_ocr_text: typed || !READ ? null : READ.text.slice(0, 3500),
     p_confidence: typed || !READ ? null : READ.conf,
     p_new_sender: $('fNew').checked,
-    p_note: $('fNote').value.trim() || null,
+    p_note: ((BILL.length ? 'Bill months: ' + BILL.join(', ') + '. ' : '') + $('fNote').value.trim()).trim() || null,
     p_dest_match: typed || !READ ? 'unknown' : READ.dest
   });
   btn.disabled = false; btn.textContent = 'Send to the lessor';

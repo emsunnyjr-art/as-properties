@@ -4430,8 +4430,30 @@ function payForBanner(contractId){
 // ---------- PAYMENT METHODS (GCash/Maya/Bank QR kiosk) ----------
 let editingPaymentMethodId = null;
 
+function qrToDataUrl(blob){
+  return new Promise((res,rej)=>{
+    const url = URL.createObjectURL(blob), im = new Image();
+    im.onload = ()=>{ URL.revokeObjectURL(url);
+      const sc = Math.min(1, 480 / Math.max(im.naturalWidth, im.naturalHeight)), c = document.createElement('canvas');
+      c.width = Math.round(im.naturalWidth*sc); c.height = Math.round(im.naturalHeight*sc);
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0,0,c.width,c.height); g.drawImage(im,0,0,c.width,c.height);
+      res(c.toDataURL('image/png')); };
+    im.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error('QR image could not be read')); };
+    im.src = url;
+  });
+}
+async function backfillQrData(rows){
+  for(const pm of rows){
+    if(!pm.qr_image_path || pm.qr_data) continue;
+    try{
+      const { data: blob } = await sb.storage.from('contract-files').download(pm.qr_image_path);
+      if(blob){ const d = await qrToDataUrl(blob); await sb.from('payment_methods').update({ qr_data: d }).eq('id', pm.id); pm.qr_data = d; }
+    }catch(e){ console.error(e); }
+  }
+}
 async function loadPaymentMethods(){
   const { data } = await sb.from('payment_methods').select('*').order('created_at');
+  backfillQrData(data||[]);
   document.getElementById('paymentMethodsTable').innerHTML = (data||[]).map(pm=>`
     <tr>
       <td>${pm.label}</td>
@@ -4461,6 +4483,8 @@ async function savePaymentMethod(){
     if(error) return alert('Error: ' + error.message);
     pmId = created.id;
   }
+  { const qf = document.getElementById('pmQrFile').files[0];
+    if(qf){ try{ const d = await qrToDataUrl(qf); await sb.from('payment_methods').update({ qr_data: d }).eq('id', pmId); }catch(e){ console.error(e); } } }
   await uploadFileToTable('pmQrFile', 'payment-qr', 'payment_methods', 'id', pmId, 'qr_image_path', 'qr_image_name');
   cancelEditPaymentMethod();
   loadPaymentMethods();
@@ -4557,7 +4581,7 @@ async function loadItemizedBill(){
     : { data: [] };
 
   itemizedBillItems = [
-    ...(rentRows||[]).map(r => ({ kind:'rent', id:r.id, label:`Rent — ${fmtDate(r.period_start)} to ${fmtDate(r.period_end)}`, amount: Number(r.amount_due) - Number(r.amount_paid) })),
+    ...(rentRows||[]).map(r => ({ kind:'rent', id:r.id, label:`Rent — ${fmtDate(r.period_start)} to ${fmtDate(r.period_end)}`, ps: r.period_start, amount: Number(r.amount_due) - Number(r.amount_paid) })),
     ...(utilRows||[]).map(u => ({ kind:'utility', id:u.id, label:`${u.utility_type.charAt(0).toUpperCase()+u.utility_type.slice(1)} — ${new Date(u.billing_month+'T00:00:00').toLocaleDateString(undefined,{month:'short',year:'numeric'})}`, amount: Number(u.amount) }))
   ];
 
@@ -4659,13 +4683,16 @@ async function sendItemizedBill(contractId){
   const total = checked.reduce((sum,it)=>sum+it.amount, 0);
 
   const { data: c } = await sb.from('contracts').select('renter_id').eq('id', contractId).single();
-  const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', c.renter_id).single();
+  const { data: renter } = await sb.from('renters').select('name, email, contact_number, portal_token').eq('id', c.renter_id).single();
   const { data: cus } = await sb.from('contract_units').select('units(unit_name)').eq('contract_id', contractId);
   const unitNames = (cus||[]).map(x=>x.units?.unit_name).filter(Boolean).join(', ');
 
   const payText = await buildPaymentInstructionsText();
   const lines = checked.map(it => `- ${it.label}: ${fmtMoney(it.amount)}`).join('\n');
-  const message = `Hi ${renter?.name||''}, here is your itemized bill for ${unitNames}:\n\n${lines}\n\nTotal: ${fmtMoney(total)}${payText}`;
+  const billPs = checked.filter(it=>it.ps).map(it=>it.ps).join(',');
+  const payLink = renter?.portal_token ? portalLinkFor(renter) + (billPs ? '&b=' + billPs : '') : '';
+  const linkText = payLink ? `\n\nPay, then upload your receipt here (scan-to-pay QR and account details are on the page):\n${payLink}` : '';
+  const message = `Hi ${renter?.name||''}, here is your itemized bill for ${unitNames}:\n\n${lines}\n\nTotal: ${fmtMoney(total)}${payText}${linkText}`;
 
   const emailStatus3 = await trySendEmail(renter?.email, 'Your Itemized Bill', message);
   showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number, message, 'itemizedNotifyPanel', 'Your Itemized Bill', emailStatus3);
@@ -5047,7 +5074,11 @@ async function openProofReview(id, focusReject){
   const due = (open||[]).filter(r=>r.due_date <= today), upcoming = (open||[]).filter(r=>r.due_date > today).slice(0,6);
   const rows = [...due, ...upcoming].map(r=>({ ...r, balance: Number(r.balance), checked:false, alloc:0, isDue: r.due_date <= today }));
   let acc = 0; const amt = Number(proof.amount);
-  rows.forEach(r=>{ if(acc < amt - 0.004){ r.checked = true; acc += r.balance; } });
+  const bm = (String(proof.note||'').match(/Bill months: ([0-9, -]+)/) || [])[1];
+  const billStarts = bm ? bm.split(',').map(x=>x.trim()).filter(Boolean) : [];
+  const billRows = rows.filter(r=>billStarts.includes(String(r.period_start).slice(0,10)));
+  if(billRows.length){ billRows.forEach(r=>{ r.checked = true; }); }
+  else rows.forEach(r=>{ if(acc < amt - 0.004){ r.checked = true; acc += r.balance; } });
   pv = { proof, rows, amount: amt, left: amt };
   pvAllocate(); pvRender();
   if(focusReject){ pvShowReject(); const t = document.getElementById('pvReasonTxt'); if(t){ t.scrollIntoView({block:'center'}); t.focus(); } }
