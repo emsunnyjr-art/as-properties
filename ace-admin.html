@@ -454,21 +454,23 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
         <select id="rEditPick" style="flex:1;min-width:200px;margin:0;"><option value="">✏️ Edit a saved renter…</option></select>
         <button type="button" class="btn secondary small" onclick="const v=document.getElementById('rEditPick').value; if(v) startEditRenter(v);">✏️ Edit</button>
       </div>
-      <div class="row">
-        <div><label>Full name</label><input id="rName"></div>
-        <div><label>Business name</label><input id="rBusiness"></div>
-        <div><label>Contact number</label><input id="rContact" placeholder="+639..."></div>
-        <div><label>Email (optional)</label><input id="rEmail"></div>
-        <div><label>Address</label><input id="rAddress"></div>
-      </div>
-      <div><label>Renter ID</label>
+      <div style="margin-bottom:12px;"><label>Step 1 — Renter ID photo <span class="muted">(the boxes below fill in by themselves; you can change anything)</span></label>
         <div id="rIdBox" onclick="idBoxTap()" style="width:100%;max-width:380px;aspect-ratio:1.586/1;border:2px dashed var(--border,#555);border-radius:10px;display:flex;align-items:center;justify-content:center;text-align:center;cursor:pointer;overflow:hidden;background:rgba(127,127,127,.08);"></div>
         <input id="rIdFile" type="file" accept=".pdf,image/*" onchange="onIdFileSelected()" style="display:none;">
         <input id="rIdCam" type="file" accept="image/*" capture="environment" onchange="onIdCamSelected()" style="display:none;">
         <div id="rIdBtns" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;"></div>
         <p class="muted" style="margin:2px 0;">The app finds the ID card and trims the background so only the full ID is saved. You can zoom and adjust the crop before saving.</p>
+        <p id="rIdReadStatus" style="margin:6px 0;font-weight:600;"></p>
         <p class="muted" id="rIdFileCurrent" style="margin:2px 0 8px 0;"></p>
       </div>
+      <div class="row">
+        <div><label>Step 2 — Full name</label><input id="rName" oninput="this.dataset.auto=''"></div>
+        <div><label>Business name</label><input id="rBusiness"></div>
+        <div><label>Contact number</label><input id="rContact" placeholder="+639..."></div>
+        <div><label>Email (optional)</label><input id="rEmail"></div>
+        <div><label>Address</label><input id="rAddress" oninput="this.dataset.auto=''"></div>
+      </div>
+
       <button class="btn big" id="renterSubmitBtn" onclick="saveRenter()">Save renter</button>
       <button class="btn secondary big" id="cancelRenterEditBtn" onclick="cancelRenterForm()">Cancel</button>
     </div>
@@ -536,9 +538,14 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
       <div id="renterDetailsBox" class="muted hidden" style="margin:6px 0 10px 0;padding:8px 10px;border:1px solid var(--line, #ddd);border-radius:8px;"></div>
 
       <div id="newRenterBlock">
+        <div style="margin:4px 0 10px 0;">
+          <button type="button" class="btn secondary" onclick="document.getElementById('cNewIdScan').click()">🪪 Step 1 — Take / choose the ID photo to fill this in</button>
+          <input id="cNewIdScan" type="file" accept="image/*" style="display:none;" onchange="cNewIdPicked()">
+          <span id="cNewIdStatus" class="muted" style="font-weight:600;margin-left:6px;"></span>
+        </div>
         <div class="row">
-          <div><label>Full name (required)</label><input id="cNewName"></div>
-          <div><label>Address</label><input id="cNewAddress"></div>
+          <div><label>Full name (required)</label><input id="cNewName" oninput="this.dataset.auto=''"></div>
+          <div><label>Address</label><input id="cNewAddress" oninput="this.dataset.auto=''"></div>
           <div><label>Nature of business</label><input id="cNewBusiness" placeholder="e.g. Sari-sari store, Motor shop"></div>
           <div><label>Contact number</label><input id="cNewContact" placeholder="+639..."></div>
           <div><label>Email (optional)</label><input id="cNewEmail"></div>
@@ -559,7 +566,7 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
         <div><label>Advance date received</label><input id="cAdvanceDate" type="date" oninput="updateAdvDepHint()"></div>
         <div><label>Advance covers (<span class="perWord">months</span>)</label><input id="cAdvancePeriods" type="number" min="0" step="1" value="0" oninput="onAdvPeriodsInput('adv'); updateAdvDepHint()"></div>
         <div><label>Deposit amount</label><input id="cDeposit" type="number" step="0.01" value="0"></div>
-        <div><label>Deposit date received (optional)</label><input id="cDepositDate" type="date" oninput="updateAdvDepHint()"></div>
+        <div><label>Deposit date received</label><input id="cDepositDate" type="date" oninput="updateAdvDepHint()"></div>
         <input id="cDepositPeriods" type="hidden" value="0">
         <div><label>Start date</label><input id="cStart" type="date" onchange="onEscalationChange(); updateAdvDepHint(); dueDayFromStart()"></div>
         <div><label id="cTermLabel">Term (months)</label><input id="cTerm" type="number" value="12" oninput="onEscalationChange()"></div>
@@ -991,6 +998,17 @@ function populateBuildingDropdown(){
     `<option value="">All buildings</option>` + list.map(b=>`<option value="${b.id}">${b.name}</option>`).join('');
 }
 
+// Easy typing: clicking a number box that shows 0 empties it so you can just type; other numbers get selected.
+document.addEventListener('focusin', e=>{
+  const el = e.target;
+  if(!el || el.tagName !== 'INPUT' || el.type !== 'number' || el.readOnly || el.disabled) return;
+  if(el.value !== '' && parseFloat(el.value) === 0){ el.dataset.wasZero = el.value; el.value = ''; }
+  else setTimeout(()=>{ try{ el.select(); }catch(_){} }, 0);
+});
+document.addEventListener('focusout', e=>{
+  const el = e.target;
+  if(el && el.dataset && el.dataset.wasZero !== undefined){ if(el.value === '') el.value = el.dataset.wasZero; delete el.dataset.wasZero; }
+});
 let pendingUnitSelection = null;
 // ---- units that currently have a tenant (active contract): locked in the new-contract form ----
 let occupiedMap = {};   // unit_id -> { contract_id, renter, end }
@@ -2498,8 +2516,49 @@ function idCropApply(){
     rIdCropped = { blob, name: base + '-id.jpg' };
     document.getElementById('idCropOverlay').classList.add('hidden');
     renderIdPreview();
+    readIdFillRenter(blob, 'rIdReadStatus', { name:'rName', address:'rAddress' });
     openFaceCropper(out);   // next: pick the face from the cropped ID
   }, 'image/jpeg', face ? 0.92 : 0.9);
+}
+// ---- read the ID photo and fill the renter boxes (name, address) ----
+function blobToB64(blob){
+  return new Promise((res,rej)=>{ const fr = new FileReader(); fr.onload = ()=>res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(blob); });
+}
+async function shrinkToJpeg(file, maxSide){
+  const url = URL.createObjectURL(file);
+  try{
+    const im = await new Promise((res,rej)=>{ const i = new Image(); i.onload = ()=>res(i); i.onerror = rej; i.src = url; });
+    const sc = Math.min(1, maxSide / Math.max(im.naturalWidth, im.naturalHeight)), c = document.createElement('canvas');
+    c.width = Math.round(im.naturalWidth*sc); c.height = Math.round(im.naturalHeight*sc);
+    c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+    return await new Promise(r=>c.toBlob(r, 'image/jpeg', 0.88));
+  } finally { URL.revokeObjectURL(url); }
+}
+async function readIdData(blob){
+  const image_b64 = await blobToB64(blob);
+  const { data, error } = await sb.functions.invoke('read-id', { body: { image_b64, media_type: 'image/jpeg' } });
+  if(error) throw new Error('The ID reader could not be reached.');
+  if(data && data.error) throw new Error(data.message || 'The ID could not be read.');
+  return data.data || {};
+}
+function autoFill(id, val){
+  const el = document.getElementById(id); if(!el || !val) return false;
+  if(el.value.trim() && el.dataset.auto !== el.value) return false;   // never overwrite what you typed
+  el.value = val; el.dataset.auto = val; return true;
+}
+async function readIdFillRenter(blob, statusId, map){
+  const st = document.getElementById(statusId); if(st){ st.style.color = ''; st.textContent = '⏳ Reading the ID…'; }
+  try{
+    const d = await readIdData(blob);
+    if(d.is_id === false){ if(st) st.textContent = 'This does not look like an ID. Please check the photo, or type the details yourself.'; return; }
+    const filled = [];
+    if(autoFill(map.name, d.full_name)) filled.push('name');
+    if(autoFill(map.address, d.address)) filled.push('address');
+    const extra = [d.id_type, d.id_number ? 'No. ' + d.id_number : '', d.birth_date ? 'born ' + fmtDate(d.birth_date) : ''].filter(Boolean).join(' · ');
+    if(st){ st.style.color = filled.length ? 'var(--good)' : ''; st.textContent = filled.length ? `✔ Filled in: ${filled.join(' and ')}. Please check it.${extra ? ' (' + extra + ')' : ''}` : 'Could not read the name or address clearly. Please type them.'; }
+  }catch(e){
+    if(st) st.textContent = '⚠ ' + (e.message || 'Could not read the ID.') + ' Please type the details yourself.';
+  }
 }
 let rFaceSaved = null;
 let rIdSaved = null;   // { path, url } of the ID already on file for the renter being edited
@@ -2703,6 +2762,7 @@ function cancelEditRenter(){
   document.getElementById('rIdFile').value = '';
   rIdCropped = null; rIdOriginalFile = null; renderIdPreview();
   document.getElementById('rIdFileCurrent').textContent = '';
+  { const _st = document.getElementById('rIdReadStatus'); if(_st) _st.textContent = ''; }
   rIdSaved = null; renderIdBox();
   { const pk = document.getElementById('rEditPick'); if(pk) pk.value = ''; }
   document.getElementById('renterFormTitle').textContent = 'Add renter';
@@ -3559,7 +3619,12 @@ function dueDayFromStart(){
 function showContractForm(show){
   const c = document.getElementById('contractFormCard'), b = document.getElementById('contractFormToggle');
   c.classList.toggle('hidden', !show);
-  if(show && !editingContractId){ dueDayTouched = false; dueDayFromStart(); }
+  if(show && !editingContractId){
+    dueDayTouched = false; dueDayFromStart();
+    const t = manilaToday();   // advance and deposit are normally received the day the contract is made: editable
+    document.getElementById('cAdvanceDate').value = t; document.getElementById('cDepositDate').value = t;
+    updateAdvDepHint();
+  }
   b.textContent = show ? 'Close' : (editingContractId ? '✏️ Back to the contract being edited' : '➕ New contract');
   if(show) c.scrollIntoView({behavior:'smooth'});
 }
@@ -3734,6 +3799,13 @@ async function contractOverlapOk(unitIds, start, rentPeriod, term, ignoreIds, cl
     return confirm(`OVERLAP WARNING\n\nThis contract (${fmtDate(start)} to ${fmtDate(end)}) overlaps another contract on the same unit(s):\n\n${lines}\n\nThe same unit would be billed twice for the overlapping days.\n\nOK = save anyway    Cancel = go back and change the dates`);
   }catch(e){ return true; }
 }
+let cNewIdBlob = null;
+async function cNewIdPicked(){
+  const inp = document.getElementById('cNewIdScan'), f = inp.files[0]; if(!f) return;
+  inp.value = '';
+  try{ cNewIdBlob = await shrinkToJpeg(f, 1600); }catch(e){ return alert('That photo could not be opened.'); }
+  await readIdFillRenter(cNewIdBlob, 'cNewIdStatus', { name:'cNewName', address:'cNewAddress' });
+}
 async function saveContract(){
   const rentPeriod = document.getElementById('cRentPeriod').value;
   dueDayFromStart();
@@ -3759,6 +3831,14 @@ async function saveContract(){
     }).select().single();
     if(rErr) return alert('Error creating renter: ' + rErr.message);
     renter_id = newRenter.id;
+    if(cNewIdBlob){   // keep the scanned ID on the new renter
+      try{
+        const path = `renters/${renter_id}/${Date.now()}-id.jpg`;
+        const { error: upErr } = await sb.storage.from('contract-files').upload(path, cNewIdBlob, { upsert:true, contentType:'image/jpeg' });
+        if(!upErr) await sb.from('renters').update({ id_file_path: path, id_file_name: 'id.jpg' }).eq('id', renter_id);
+      }catch(e){ console.error(e); }
+      cNewIdBlob = null; document.getElementById('cNewIdStatus').textContent = '';
+    }
   }
 
   const start_date = document.getElementById('cStart').value;
@@ -4696,6 +4776,7 @@ async function loadItemizedBill(){
   card.innerHTML = `
     <div class="card" style="border-color:var(--accent);">
       <p class="section-title">Itemized bill — collect in one go</p>
+      <button class="btn secondary small" type="button" id="billToggleBtn" onclick="itemizedToggleAll()" style="margin-bottom:8px;">☐ Untick all</button>
       <table>
         <thead><tr><th></th><th>Item</th><th>Amount</th><th>Paying now</th></tr></thead>
         <tbody>
@@ -4717,10 +4798,7 @@ async function loadItemizedBill(){
         <button class="btn secondary small" type="button" onclick="itemizedSpread()">Apply, oldest month first</button>
         <button class="btn secondary small" type="button" onclick="itemizedReset()">Reset to full</button>
       </div>
-      <div style="display:flex;gap:8px;margin-top:8px;">
-        <button class="btn secondary small" type="button" onclick="itemizedCheckAll(false)">Uncheck all</button>
-        <button class="btn secondary small" type="button" onclick="itemizedCheckAll(true)">Check all</button>
-      </div>
+
       <p style="font-size:20px;font-weight:700;margin:12px 0;">Total: <span id="itemizedTotal"></span></p>
       <div class="row">
         <div><label>Date received</label><input id="itemizedDate" type="date" value="${manilaToday()}" max="${manilaToday()}"></div>
@@ -4765,6 +4843,10 @@ function itemizedSpread(){
   updateItemizedTotal();
   if(left > 0.004) alert('That is more than the ticked items need. ' + fmtMoney(left) + ' is left over and was not applied.');
 }
+function itemizedToggleAll(){
+  const allOn = itemizedBillItems.every((it,i)=>{ const el = document.getElementById(`billItem${i}`); return el && el.checked; });
+  itemizedCheckAll(!allOn);
+}
 function itemizedCheckAll(on){
   itemizedBillItems.forEach((it,i)=>{ const el = document.getElementById(`billItem${i}`); if(el) el.checked = on; });
   updateItemizedTotal();
@@ -4778,6 +4860,8 @@ function updateItemizedTotal(){
     if(checked) total += itemizedPayOf(it, i);
   });
   document.getElementById('itemizedTotal').textContent = fmtMoney(total);
+  const tb = document.getElementById('billToggleBtn');
+  if(tb) tb.textContent = itemizedBillItems.every((it,i)=>document.getElementById(`billItem${i}`).checked) ? '☐ Untick all' : '☑ Tick all';
 }
 
 async function sendItemizedBill(contractId){
@@ -4905,6 +4989,7 @@ function rpRender(){
     </div>
     <p class="muted" style="margin:10px 0 6px 0;">Tick the months that were paid. Tap <strong>up to here</strong> to tick every month from the oldest to that one. If they paid only part of a month, tap <strong>Part-pay</strong> on that month.</p>
     ${rpRows.length ? `
+    <button class="btn secondary small" type="button" onclick="rpToggleAll(${!rpRows.every(r=>r.checked)})" style="margin-bottom:6px;">${rpRows.every(r=>r.checked) ? '☐ Untick all' : '☑ Tick all'}</button>
     <div style="max-height:340px;overflow:auto;"><table>
       <thead><tr><th><input type="checkbox" id="rpAll" onchange="rpToggleAll(this.checked)"></th><th>Month</th><th>Due</th><th>Balance</th><th></th></tr></thead>
       <tbody>${rpRows.map((r,i)=>`<tr>
@@ -5535,7 +5620,7 @@ function bulkRender(){
   const vis = bulkVisible();
   if(!vis.length){ list.innerHTML = '<p class="muted">Nothing unpaid for this selection.</p>'; bulkTotals(); return; }
   const nRent = new Set(vis.map(r=>r.renter_name)).size;
-  list.innerHTML = `<p class="muted" style="margin:0 0 6px;">${vis.length} unpaid month${vis.length===1?'':'s'} · ${nRent} renter${nRent===1?'':'s'} · only months already past due are ticked — tick a not-yet-due month yourself if it was paid early (scroll for the rest, or search a name)</p><div style="max-height:65vh;overflow:auto;"><table>
+  list.innerHTML = `<p class="muted" style="margin:0 0 6px;">${vis.length} unpaid month${vis.length===1?'':'s'} · ${nRent} renter${nRent===1?'':'s'} · only months already past due are ticked — tick a not-yet-due month yourself if it was paid early (scroll for the rest, or search a name)</p><button class="btn secondary small" type="button" onclick="bulkToggleAll(${!vis.every(r=>r.checked)})" style="margin-bottom:6px;">${vis.every(r=>r.checked) ? '☐ Untick all' : '☑ Tick all'}</button><div style="max-height:65vh;overflow:auto;"><table>
     <thead><tr><th><input type="checkbox" id="bulkAll" checked onchange="bulkToggleAll(this.checked)"></th><th>Renter</th><th>Unit</th><th>Period</th><th>Balance</th><th>Paying now</th></tr></thead>
     <tbody>${vis.map(r=>`<tr>
       <td><input type="checkbox" ${r.checked?'checked':''} onchange="bulkToggle('${r.payment_id}',this.checked)"></td>
