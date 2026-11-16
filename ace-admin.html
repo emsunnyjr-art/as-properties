@@ -498,7 +498,8 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
         <tbody id="contractsTable"></tbody>
       </table>
     </div>
-    <div class="card">
+    <button class="btn" id="contractFormToggle" onclick="toggleContractForm()" style="margin:0 0 12px 0;">➕ New contract</button>
+    <div class="card hidden" id="contractFormCard">
       <p class="section-title" id="contractFormTitle">New contract</p>
 
       <div class="row">
@@ -3460,7 +3461,7 @@ async function startEditContract(id){
   editLoadedRent = Number(c.rent_amount) || 0;
   editLoadedDates = [c.start_date, c.term_months, c.term_days, c.term_years, c.rent_due_day].join('|');
   editLoadedEsc = JSON.stringify(readEscalationFromForm());
-  document.getElementById('contractFormTitle').scrollIntoView({behavior:'smooth'});
+  showContractForm(true);
 }
 
 let dueDayTouched = false;
@@ -3471,12 +3472,23 @@ function dueDayFromStart(){
   const v = document.getElementById('cStart').value; if(!v) return;
   document.getElementById('cDueDay').value = parseInt(v.slice(8,10), 10) || 1;
 }
+function showContractForm(show){
+  const c = document.getElementById('contractFormCard'), b = document.getElementById('contractFormToggle');
+  c.classList.toggle('hidden', !show);
+  b.textContent = show ? '✖ Hide contract form' : (editingContractId ? '✏️ Back to the contract being edited' : '➕ New contract');
+  if(show) c.scrollIntoView({behavior:'smooth'});
+}
+function toggleContractForm(){
+  const open = !document.getElementById('contractFormCard').classList.contains('hidden');
+  showContractForm(!open);
+}
 function cancelEditContract(){
   dueDayTouched = false;
   editingContractId = null;
   document.getElementById('contractFormTitle').textContent = 'New contract';
   document.getElementById('contractSubmitBtn').textContent = 'Create Contract';
   document.getElementById('cancelEditBtn').classList.add('hidden');
+  showContractForm(false);
   renterModeTouched = false;
   document.getElementById('renterMode').value = savedRenters.length ? 'existing' : 'new';
   document.getElementById('cRenterExisting').value = '';
@@ -3775,6 +3787,7 @@ async function saveContract(){
     const emailStatus2 = await trySendEmail(renter?.email, 'Your new lease contract', newMsg);
     showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number, newMsg, null, 'Your new lease contract', emailStatus2);
 
+    showContractForm(false);
     document.getElementById('cNotes').value='';
     document.getElementById('cTerms').value = DEFAULT_TERMS;
     document.getElementById('cSignedFile').value = '';
