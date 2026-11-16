@@ -49,7 +49,9 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
     font-weight:600;cursor:pointer;font-size:14px;}
   button.btn.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--border);}
   button.btn.danger{background:var(--bad);color:#fff;}
-  button.small{padding:5px 10px;font-size:12px;border-radius:6px;}
+  a.btn{background:var(--accent);color:#04121e;border:none;padding:9px 16px;border-radius:8px;font-weight:600;font-size:14px;text-decoration:none;display:inline-block;}
+  a.btn.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--border);}
+  button.small,a.btn.small{padding:5px 10px;font-size:12px;border-radius:6px;}
   .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;}
   .b-active,.b-paid,.b-occupied{background:rgba(62,207,142,.15);color:var(--good);}
   .b-pending,.b-vacant{background:rgba(143,163,179,.15);color:var(--muted);}
@@ -3291,7 +3293,7 @@ function setRenterChip(k){ renterChip = k; loadRenters(); }
 async function buildPaymentInstructionsText(){
   const { data: methods } = await sb.from('payment_methods').select('*').eq('is_active', true).order('method_type');
   if(!methods || methods.length === 0) return '';
-  const lines = methods.map(pm => `- ${pm.label}${pm.account_number ? ': ' + pm.account_number : ''}${pm.account_name ? ' (' + pm.account_name + ')' : ''}`);
+  const lines = [...new Set(methods.map(pm => `- ${pm.label}${pm.account_number ? ': ' + pm.account_number : ''}${pm.account_name ? ' (' + pm.account_name + ')' : ''}`))];
   return `\n\nYou can pay via:\n${lines.join('\n')}`;
 }
 
@@ -3412,7 +3414,8 @@ function showNotifyPanel(renterName, email, contact, message, panelId, subject, 
       <p class="section-title">Notify ${renterName}?</p>
       <textarea id="${panelId}_msg" rows="4">${message}</textarea>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-        <button class="btn" type="button" onclick="shareNotify('${panelId}')">Share to Viber, Messenger or any app</button>
+        <button class="btn" type="button" onclick="shareNotify('${panelId}')">Share to Viber, Messenger or any app (with QR)</button>
+        <button class="btn secondary" type="button" onclick="downloadNotifyQr()">⬇ Save QR image</button>
         <button class="btn secondary" type="button" onclick="messengerNotify('${panelId}')">Messenger</button>
         <button class="btn secondary" type="button" onclick="copyNotifyMessage('${panelId}')">📋 Copy message</button>
         ${viberHref ? `<a class="btn" style="text-decoration:none;display:inline-block;" href="${viberHref}">💜 Open Viber</a>` : `<span class="muted">No contact number on file</span>`}
@@ -3424,10 +3427,33 @@ function showNotifyPanel(renterName, email, contact, message, panelId, subject, 
     </div>`;
 }
 
+async function notifyQrFiles(){
+  const files = [];
+  try{
+    const { data } = await sb.from('payment_methods').select('label, qr_data').eq('is_active', true).not('qr_data','is',null);
+    const seen = new Set();
+    for(const m of data||[]){
+      if(seen.has(m.qr_data)) continue; seen.add(m.qr_data);
+      const b = await (await fetch(m.qr_data)).blob();
+      files.push(new File([b], (m.label||'payment-qr').replace(/[^\w-]+/g,'_') + '.png', { type: b.type || 'image/png' }));
+    }
+  }catch(e){ console.error('QR files', e); }
+  return files;
+}
+async function downloadNotifyQr(){
+  const files = await notifyQrFiles();
+  if(!files.length) return alert('No QR image is saved yet. Add one under Payments → Payment methods.');
+  files.forEach(f=>{ const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); });
+  alert('QR image saved to your downloads. Attach it in Viber, Messenger or Telegram together with the message.');
+}
 async function shareNotify(panelId){
   const text = document.getElementById(`${panelId}_msg`).value;
   if(navigator.share){
-    try{ await navigator.share({ text }); return; }
+    const files = await notifyQrFiles();
+    try{
+      if(files.length && navigator.canShare && navigator.canShare({ files })){ await navigator.share({ text, files }); return; }   // message + QR image together
+      await navigator.share({ text }); return;
+    }
     catch(e){ if(e && e.name === 'AbortError') return; }   // closed the share sheet: do nothing
   }
   await copyNotifyMessage(panelId);   // this browser has no share sheet: copy so it can be pasted into any app
