@@ -482,6 +482,23 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
   <section id="tab-contracts" class="hidden">
     <div id="notifyPanel"></div>
     <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+        <p class="section-title" style="margin:0;">All contracts <span class="muted" id="filterLabel"></span></p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <select id="contractsFilterLocation" style="width:180px;margin:0;" onchange="onContractsFilterLocationChange()"></select>
+          <select id="contractsFilterBuilding" style="width:180px;margin:0;" onchange="onContractsFilterBuildingChange()"></select>
+          <select id="contractUnitFilter" style="width:200px;margin:0;" onchange="onUnitFilterChange()"></select>
+          <button class="btn secondary small" onclick="clearUnitFilter()">Clear filter</button>
+          <button class="btn secondary small" id="toggleCancelledBtn" onclick="toggleCancelledContracts()">🙈 Hide cancelled contracts</button>
+        </div>
+      </div>
+      <p class="muted">Shows the current contract per unit only. Past renters stay on file — tap "🕘 History" on a unit to see them.</p>
+      <table>
+        <thead><tr><th>Unit</th><th>Renter</th><th>Rent</th><th>Start</th><th>End</th><th>Status</th><th>Unpaid</th><th></th></tr></thead>
+        <tbody id="contractsTable"></tbody>
+      </table>
+    </div>
+    <div class="card">
       <p class="section-title" id="contractFormTitle">New contract</p>
 
       <div class="row">
@@ -589,23 +606,6 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
       <button class="btn" id="contractSubmitBtn" onclick="saveContract()">Create Contract</button>
       <button class="btn secondary hidden" id="cancelEditBtn" onclick="cancelEditContract()">Cancel edit</button>
       <p class="muted">Creating a new contract for a unit that already has an active one closes the old one out automatically (kept on file, not deleted) the day before this one starts. Editing an existing contract only regenerates the schedule going forward — anything already paid stays untouched.</p>
-    </div>
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
-        <p class="section-title" style="margin:0;">All contracts <span class="muted" id="filterLabel"></span></p>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <select id="contractsFilterLocation" style="width:180px;margin:0;" onchange="onContractsFilterLocationChange()"></select>
-          <select id="contractsFilterBuilding" style="width:180px;margin:0;" onchange="onContractsFilterBuildingChange()"></select>
-          <select id="contractUnitFilter" style="width:200px;margin:0;" onchange="onUnitFilterChange()"></select>
-          <button class="btn secondary small" onclick="clearUnitFilter()">Clear filter</button>
-          <button class="btn secondary small" id="toggleCancelledBtn" onclick="toggleCancelledContracts()">🙈 Hide cancelled contracts</button>
-        </div>
-      </div>
-      <p class="muted">Shows the current contract per unit only. Past renters stay on file — tap "🕘 History" on a unit to see them.</p>
-      <table>
-        <thead><tr><th>Unit</th><th>Renter</th><th>Rent</th><th>Start</th><th>End</th><th>Status</th><th>Unpaid</th><th></th></tr></thead>
-        <tbody id="contractsTable"></tbody>
-      </table>
     </div>
   </section>
 
@@ -3460,7 +3460,7 @@ async function startEditContract(id){
   editLoadedRent = Number(c.rent_amount) || 0;
   editLoadedDates = [c.start_date, c.term_months, c.term_days, c.term_years, c.rent_due_day].join('|');
   editLoadedEsc = JSON.stringify(readEscalationFromForm());
-  document.querySelector('#tab-contracts').scrollIntoView({behavior:'smooth'});
+  document.getElementById('contractFormTitle').scrollIntoView({behavior:'smooth'});
 }
 
 let dueDayTouched = false;
