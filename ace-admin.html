@@ -3475,14 +3475,16 @@ function showNotifyPanel(renterName, email, contact, message, panelId, subject, 
       <textarea id="${panelId}_msg" rows="4">${message}</textarea>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button class="btn" type="button" onclick="shareNotify('${panelId}')">Share to Viber, Messenger or any app (with QR)</button>
+        <button class="btn secondary" type="button" onclick="copyNotifyQr()">🖼 Copy QR image</button>
         <button class="btn secondary" type="button" onclick="downloadNotifyQr()">⬇ Save QR image</button>
         <button class="btn secondary" type="button" onclick="messengerNotify('${panelId}')">Messenger</button>
         <button class="btn secondary" type="button" onclick="copyNotifyMessage('${panelId}')">📋 Copy message</button>
-        ${viberHref ? `<a class="btn" style="text-decoration:none;display:inline-block;" href="${viberHref}">💜 Open Viber</a>` : `<span class="muted">No contact number on file</span>`}
+        ${viberHref ? `<button class="btn" type="button" onclick="viberSend('${panelId}','${viberDigits}')">💜 Open Viber (QR ready to paste)</button>` : `<span class="muted">No contact number on file</span>`}
         ${smsHrefVal ? `<a class="btn secondary" style="text-decoration:none;display:inline-block;" href="${smsHrefVal}">💬 Open SMS</a>` : ''}
         ${emailStatusHtml}
         <button class="btn secondary" onclick="document.getElementById('${panelId}').innerHTML=''">Close</button>
       </div>
+      <div id="${panelId}_steps"></div>
       <p class="muted">"Open Viber" opens the right chat but won't pre-fill the message (confirmed not to work on either Desktop or mobile) — tap "Copy message" first, then paste it in yourself. SMS pre-fills correctly. Email, when available, sends for real automatically — the result is shown above.</p>
     </div>`;
 }
@@ -3499,6 +3501,29 @@ async function notifyQrFiles(){
     }
   }catch(e){ console.error('QR files', e); }
   return files;
+}
+async function viberSend(panelId, digits){
+  // One tap: the QR image goes onto the clipboard and Viber opens on this renter's chat. Viber itself does not let a web page pre-load an image or text.
+  const files = await notifyQrFiles();
+  let copied = false;
+  if(files.length){ try{ await navigator.clipboard.write([ new ClipboardItem({ 'image/png': files[0] }) ]); copied = true; }catch(e){ console.error(e); } }
+  const box = document.getElementById(`${panelId}_steps`);
+  if(box) box.innerHTML = `<div style="margin:10px 0;padding:10px;border:1px solid var(--accent);border-radius:10px;">
+    <div><strong>1.</strong> ${copied ? '✔ QR image copied. In the Viber chat, press <strong>Ctrl+V</strong> (Cmd+V on a Mac) and send it as a photo.' : 'The QR image could not be copied. Tap <strong>⬇ Save QR image</strong> and send it as a photo.'}</div>
+    <div style="margin-top:6px;"><strong>2.</strong> <button class="btn secondary small" type="button" onclick="copyNotifyMessage('${panelId}')">📋 Copy message</button> then paste it in the chat and send.</div></div>`;
+  location.href = `viber://chat?number=${digits}`;
+}
+async function copyNotifyQr(){
+  const files = await notifyQrFiles();
+  if(!files.length) return alert('No QR image is saved yet. Add one under Payments → Payment methods.');
+  try{
+    await navigator.clipboard.write([ new ClipboardItem({ 'image/png': files[0] }) ]);
+    alert('QR image copied. Open the chat in Viber, Messenger or Telegram and paste it (Ctrl+V, or Cmd+V on a Mac). It goes as a photo.');
+  }catch(e){
+    console.error(e);
+    alert('This browser could not copy the image. It will be saved to your downloads instead; send it as a photo.');
+    await downloadNotifyQr();
+  }
 }
 async function downloadNotifyQr(){
   const files = await notifyQrFiles();
