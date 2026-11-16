@@ -3621,6 +3621,16 @@ async function viewStoredFile(path, title){
   frame.src = data.signedUrl;
 }
 
+async function viewQrImage(path, title){
+  showPreviewOverlay('Loading file…');
+  const { data, error } = await sb.storage.from('contract-files').createSignedUrl(path, 3600);
+  document.getElementById('previewTitle').textContent = title || 'QR code';
+  const frame = document.getElementById('previewFrame');
+  if(error){ frame.srcdoc = `<body style="font-family:sans-serif;padding:40px;"><h2>Could not open file</h2><p>${error.message}</p></body>`; return; }
+  frame.removeAttribute('src');
+  frame.srcdoc = `<body style="margin:0;display:flex;justify-content:center;padding:24px;background:#fff;"><img src="${data.signedUrl}" style="width:100%;max-width:300px;height:auto;object-fit:contain;"></body>`;
+}
+
 async function uploadSignedFileIfSelected(contractId){
   await uploadFileToTable('cSignedFile', 'contracts', 'contracts', 'id', contractId, 'signed_file_path', 'signed_file_name');
 }
@@ -4527,7 +4537,7 @@ async function loadPaymentMethods(){
       <td>${pm.account_number||'—'}${pm.account_name ? ' ('+pm.account_name+')' : ''}</td>
       <td><span class="badge b-${pm.is_active?'active':'cancelled'}">${pm.is_active?'active':'inactive'}</span></td>
       <td>
-        ${pm.qr_image_path ? `<button class="btn secondary small" onclick="viewStoredFile('${pm.qr_image_path}','${pm.label.replace(/'/g,"\\'")} QR')">View QR</button>` : ''}
+        ${pm.qr_image_path ? `<button class="btn secondary small" onclick="viewQrImage('${pm.qr_image_path}','${pm.label.replace(/'/g,"\\'")} QR')">View QR</button>` : ''}
         <button class="btn secondary small" onclick="startEditPaymentMethod('${pm.id}')">Edit</button>
         <button class="btn danger small" onclick="confirmDelete(this, () => deletePaymentMethod('${pm.id}'))">Delete</button>
       </td>
