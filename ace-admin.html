@@ -4590,6 +4590,10 @@ async function loadItemizedBill(){
         <button class="btn secondary small" type="button" onclick="itemizedSpread()">Apply, oldest month first</button>
         <button class="btn secondary small" type="button" onclick="itemizedReset()">Reset to full</button>
       </div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn secondary small" type="button" onclick="itemizedCheckAll(false)">Uncheck all</button>
+        <button class="btn secondary small" type="button" onclick="itemizedCheckAll(true)">Check all</button>
+      </div>
       <p style="font-size:20px;font-weight:700;margin:12px 0;">Total: <span id="itemizedTotal"></span></p>
       <div class="row">
         <div><label>Date received</label><input id="itemizedDate" type="date" value="${manilaToday()}" max="${manilaToday()}"></div>
@@ -4633,6 +4637,10 @@ function itemizedSpread(){
   });
   updateItemizedTotal();
   if(left > 0.004) alert('That is more than the ticked items need. ' + fmtMoney(left) + ' is left over and was not applied.');
+}
+function itemizedCheckAll(on){
+  itemizedBillItems.forEach((it,i)=>{ const el = document.getElementById(`billItem${i}`); if(el) el.checked = on; });
+  updateItemizedTotal();
 }
 function updateItemizedTotal(){
   let total = 0;
