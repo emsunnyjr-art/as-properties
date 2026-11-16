@@ -188,6 +188,11 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
         <p class="muted" style="margin-top:-6px;">Nothing is marked paid until you approve. Check your GCash or bank account first.</p>
         <div id="proofsTable"></div>
       </div>
+      <div class="card hidden" id="autoProofsCard" style="border-color:var(--accent);">
+        <p class="section-title">Credited from chat — needs your check <span id="autoProofsCount"></span></p>
+        <p class="muted" style="margin-top:-6px;">These receipts were read automatically and already credited to the renter's dues, oldest first. Check your GCash or bank account, then tap <strong>Confirm</strong>. If the money did not arrive, tap <strong>Reverse</strong> and the credit is undone.</p>
+        <div id="autoProofsTable"></div>
+      </div>
       <div class="card hidden" id="overdueCard">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;">
           <p class="section-title" style="margin:0;">Overdue</p>
@@ -4832,6 +4837,7 @@ function renterPortalHtml(r){
     <strong>Renter ID: ${bulkEsc(r.renter_code)}</strong>
     <span class="muted"> · private payment link for this renter</span><br>
     <button class="btn secondary small" onclick="copyText('${link}',this)">Copy link</button>
+    <button class="btn secondary small" onclick="copyTelegramLink('${r.id}',this)" title="Message to send the renter so they can send receipts by Telegram">📨 Telegram link</button>${window.__tgLinked && window.__tgLinked.has(r.id) ? ' <span class="badge b-active">Telegram connected ✓</span>' : ''}
     ${r.contact_number ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="${smsHref(r.contact_number, msg)}">SMS</a>` : ''}
     ${viber ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="viber://chat?number=${viber}&text=${encodeURIComponent(msg)}">Viber</a>` : ''}
     ${r.email ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="mailto:${encodeURIComponent(r.email)}?subject=${encodeURIComponent('Your payment link')}&body=${encodeURIComponent(msg)}">Email</a>` : ''}
@@ -4885,8 +4891,38 @@ async function loadProofs(){
   const { data: st } = await sb.from('app_settings').select('key,value').in('key',['owner_email','owner_phone']);
   (st||[]).forEach(x=>{ const el = document.getElementById(x.key==='owner_email'?'ownerEmail':'ownerPhone'); if(el && document.activeElement !== el) el.value = x.value||''; });
   const rows = data || [];
-  window.__proofCount = rows.length;
-  setProofTile(rows.length);
+  try{
+    const { data: tgl } = await sb.from('telegram_links').select('renter_id');
+    window.__tgLinked = new Set((tgl||[]).map(x=>x.renter_id));
+    const { data: bu } = await sb.from('app_settings').select('value').eq('key','telegram_bot_username').maybeSingle();
+    window.__tgBot = (bu && bu.value) || '';
+  }catch(e){}
+  let autoRows = [];
+  try{
+    const { data: ar } = await sb.from('payment_proofs')
+      .select('id, amount, ref_number, flags, created_at, image_path, payment_ids, renters(name, renter_code)')
+      .eq('status','auto').order('created_at');
+    autoRows = ar || [];
+  }catch(e){}
+  { const ac = document.getElementById('autoProofsCard');
+    ac.classList.toggle('hidden', autoRows.length === 0);
+    document.getElementById('autoProofsCount').innerHTML = autoRows.length ? `<span class="badge b-overdue">${autoRows.length}</span>` : '';
+    document.getElementById('autoProofsTable').innerHTML = autoRows.map(r=>{
+      const sent = new Date(r.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila', month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+      const f = r.flags || {};
+      return `<div class="hcard">
+        <div class="top"><div class="nm">${bulkEsc(r.renters?.name||'—')} <span class="muted">${bulkEsc(r.renters?.renter_code||'')}</span></div><div class="amt">${fmtMoney(r.amount)}</div></div>
+        <div class="sub">Ref ${bulkEsc(r.ref_number||'—')} · received ${sent} · credited to ${(r.payment_ids||[]).length} month${(r.payment_ids||[]).length===1?'':'s'}${Number(f.unapplied)>0 ? ' · <strong>' + fmtMoney(f.unapplied) + ' not applied (more than owed)</strong>' : ''}</div>
+        <div>${proofFlagBadges({ ...f })}</div>
+        <div class="acts">
+          ${r.image_path ? `<button class="btn secondary big" onclick="viewStoredFile('${String(r.image_path).replace(/'/g,"\\'")}','Receipt')">View receipt</button>` : ''}
+          <button class="btn secondary big" onclick="autoProofReverse('${r.id}')">Reverse</button>
+          <button class="btn big" onclick="autoProofConfirm('${r.id}')">Confirm</button>
+        </div></div>`;
+    }).join('');
+  }
+  window.__proofCount = rows.length + autoRows.length;
+  setProofTile(rows.length + autoRows.length);
   card.classList.toggle('hidden', rows.length === 0);
   document.getElementById('proofsCount').innerHTML = rows.length ? `<span class="badge b-overdue">${rows.length}</span>` : '';
   document.getElementById('proofsTable').innerHTML = rows.map(r=>{
@@ -4902,6 +4938,40 @@ async function loadProofs(){
   }).join('');
 }
 
+async function autoProofConfirm(id){
+  if(!confirm('Confirm that this money really arrived in your account?')) return;
+  const { error } = await sb.rpc('confirm_auto_proof', { p_proof_id: id });
+  if(error) return alert(error.message);
+  loadProofs(); try{ loadDashboard(); }catch(e){}
+}
+async function autoProofReverse(id){
+  const reason = prompt('Why are you reversing this? (e.g. money did not arrive, wrong amount, fake receipt)');
+  if(reason === null) return;
+  if(!reason.trim()) return alert('Please type a reason.');
+  if(!confirm('Reverse every credit made by this receipt? The months go back to unpaid.')) return;
+  const { data, error } = await sb.rpc('reverse_auto_proof', { p_proof_id: id, p_reason: reason.trim() });
+  if(error) return alert(error.message);
+  alert('Reversed ' + (data?.reversed ?? 0) + ' credit(s).');
+  loadProofs(); try{ loadDashboard(); loadPaymentSchedule(); }catch(e){}
+}
+async function telegramLinkFor(r){
+  let bot = window.__tgBot || '';
+  if(!bot){
+    bot = (prompt('Type your Telegram bot username once (the one ending in "bot", with or without @):') || '').trim().replace(/^@/,'');
+    if(!bot) return null;
+    const { error } = await sb.from('app_settings').upsert({ key:'telegram_bot_username', value: bot, updated_at: new Date().toISOString() });
+    if(error){ alert('Could not save the bot name: ' + error.message); return null; }
+    window.__tgBot = bot;
+  }
+  return `https://t.me/${bot}?start=${r.portal_token}`;
+}
+async function copyTelegramLink(renterId, btn){
+  const { data: r } = await sb.from('renters').select('id, name, portal_token').eq('id', renterId).single();
+  if(!r?.portal_token) return alert('Turn this renter\'s payment link on first.');
+  const link = await telegramLinkFor(r); if(!link) return;
+  const msg = `Hi ${r.name}, to send your rent receipts by Telegram, open this link once and press START: ${link}\nAfter that, just send the photo of your receipt there.`;
+  copyText(msg, btn);
+}
 let pv = null;
 async function openProofReview(id, focusReject){
   let ov = document.getElementById('proofOverlay');
