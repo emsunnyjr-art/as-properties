@@ -606,7 +606,7 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
 
       <button class="btn" id="contractSubmitBtn" onclick="saveContract()">Create Contract</button>
       <button class="btn secondary hidden" id="cancelEditBtn" onclick="cancelEditContract()">Cancel edit</button>
-      <p class="muted">Creating a new contract for a unit that already has an active one closes the old one out automatically (kept on file, not deleted) the day before this one starts. Editing an existing contract only regenerates the schedule going forward — anything already paid stays untouched.</p>
+      <p class="muted">A unit that has a tenant is locked here (🔒) and cannot be put in a new contract. Cancel or end that tenant's contract first, then the unit becomes available. Editing an existing contract only regenerates the schedule going forward — anything already paid stays untouched.</p>
     </div>
   </section>
 
@@ -907,6 +907,8 @@ async function loadContractCascadingData(){
     sb.from('units').select('id, unit_name, price, building_id').order('unit_name')
   ]);
   allLocations = locs||[]; allBuildings = blds||[]; allUnits = units||[];
+  await loadOccupiedUnits();
+  startOccupancySync();
 
   document.getElementById('cLocation').innerHTML =
     `<option value="">All locations</option>` +
@@ -988,6 +990,55 @@ function populateBuildingDropdown(){
 }
 
 let pendingUnitSelection = null;
+// ---- units that currently have a tenant (active contract): locked in the new-contract form ----
+let occupiedMap = {};   // unit_id -> { contract_id, renter, end }
+async function loadOccupiedUnits(){
+  const { data, error } = await sb.from('contract_units').select('unit_id, contracts!inner(id, status, end_date, renters(name))').eq('contracts.status','active');
+  if(error){ console.error('occupied units', error); return occupiedMap; }
+  const m = {};
+  (data||[]).forEach(r=>{ if(r.contracts) m[r.unit_id] = { contract_id: r.contracts.id, renter: r.contracts.renters?.name || 'a tenant', end: r.contracts.end_date }; });
+  occupiedMap = m; return m;
+}
+function unitLockedFor(uid){
+  const o = occupiedMap[uid]; if(!o) return null;
+  return (editingContractId && o.contract_id === editingContractId) ? null : o;   // the contract being edited may keep its own units
+}
+async function assertUnitsFree(unitIds){
+  await loadOccupiedUnits();
+  const bad = unitIds.filter(u=>unitLockedFor(u));
+  if(!bad.length) return true;
+  const names = bad.map(u=>`• ${(allUnits.find(x=>x.id===u)||{}).unit_name||'Unit'} — ${occupiedMap[u].renter}${occupiedMap[u].end ? ' (contract until ' + fmtDate(occupiedMap[u].end) + ')' : ''}`).join('\n');
+  pendingUnitSelection = unitIds.filter(u=>!unitLockedFor(u)); populateUnitDropdown();
+  alert(`These units already have a tenant, so they cannot be used in a new contract:\n\n${names}\n\nCancel or end that tenant's contract first (Contracts list → Cancel), then create this one.`);
+  return false;
+}
+// Keep every open tab and device in step: refresh the lock list and the screens that use contracts and units.
+let occTimer = null;
+function occupancyChanged(){
+  clearTimeout(occTimer);
+  occTimer = setTimeout(async ()=>{
+    try{
+      await loadOccupiedUnits();
+      pendingUnitSelection = getSelectedUnitIds().filter(u=>!unitLockedFor(u));
+      populateUnitDropdown();
+      await Promise.all([loadUnitsTable(), loadContractsTable(), loadPayContractSelect(), loadDashboard()]);
+    }catch(e){ console.error(e); }
+  }, 500);
+}
+let occBC = null, occRT = null;
+function startOccupancySync(){
+  if(occRT) return;
+  try{ occBC = new BroadcastChannel('ace-occupancy'); occBC.onmessage = ()=>occupancyChanged(); }catch(e){}
+  try{
+    occRT = sb.channel('occupancy')
+      .on('postgres_changes', { event:'*', schema:'public', table:'contracts' }, occupancyChanged)
+      .on('postgres_changes', { event:'*', schema:'public', table:'contract_units' }, occupancyChanged)
+      .subscribe();
+  }catch(e){ console.error('realtime', e); }
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) occupancyChanged(); });
+  window.addEventListener('focus', occupancyChanged);
+}
+function announceOccupancy(){ try{ occBC && occBC.postMessage('changed'); }catch(e){} occupancyChanged(); }
 
 function populateUnitDropdown(){
   const bldId = document.getElementById('cBuilding').value;
@@ -1003,12 +1054,19 @@ function populateUnitDropdown(){
   const checkedSet = new Set(pendingUnitSelection || []);
   pendingUnitSelection = null;
   const container = document.getElementById('cUnitChecklist');
-  container.innerHTML = list.map(u=>`
+  container.innerHTML = list.map(u=>{
+    const lock = unitLockedFor(u.id);
+    if(lock) return `
+    <label title="This unit has a tenant. Cancel or end that contract first." style="display:flex;align-items:center;gap:8px;padding:4px 0;margin:0;font-size:14px;font-weight:normal;color:var(--muted);cursor:not-allowed;">
+      <input type="checkbox" value="${u.id}" disabled style="width:auto;flex-shrink:0;margin:0;">
+      <span>🔒 ${u.unit_name} <span class="muted">— occupied by ${bulkEsc(lock.renter)}${lock.end ? ' (contract until ' + fmtDate(lock.end) + ')' : ''}</span></span>
+    </label>`;
+    return `
     <label style="display:flex;align-items:center;gap:8px;padding:4px 0;margin:0;font-size:14px;font-weight:normal;color:var(--text);">
       <input type="checkbox" value="${u.id}" data-price="${u.price}" onchange="onUnitChange()" ${checkedSet.has(u.id)?'checked':''} style="width:auto;flex-shrink:0;margin:0;">
       <span>${u.unit_name}</span>
-    </label>
-  `).join('') || '<span class="muted">No units in this filter.</span>';
+    </label>`;
+  }).join('') || '<span class="muted">No units in this filter.</span>';
   onUnitChange();
 
   const selectedBuilding = allBuildings.find(b=>b.id===bldId);
@@ -3646,6 +3704,7 @@ async function saveContract(){
   { const dd = parseInt(document.getElementById('cDueDay').value); if(rentPeriod === 'monthly' && !(dd >= 1 && dd <= 31)) return alert('Rent due day must be a number from 1 to 31.'); }
   const unitIds = getSelectedUnitIds();
   if(unitIds.length === 0) return alert('Select at least one unit');
+  if(!(await assertUnitsFree(unitIds))) return;   // a unit with a tenant can never go into another contract
 
   // Resolve renter: existing selection, or create a new renter record first
   let renter_id;
@@ -3755,6 +3814,7 @@ async function saveContract(){
     showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number, updateMsg, null, 'Your contract has been updated', emailStatus1);
 
     cancelEditContract();
+    announceOccupancy();
   } else {
     // A unit can only have one current renter. Any of the selected units
     // might already have its own active contract (possibly different ones
@@ -3775,14 +3835,21 @@ async function saveContract(){
 
     const { data: created, error } = await sb.from('contracts').insert(payload).select().single();
     if(error) return alert(contractSaveError(error));
+    // link the units first: the database refuses a unit that already has a tenant, and then nothing else is saved
+    { const { error: cuErr } = await sb.from('contract_units').insert(unitIds.map(uid=>({ contract_id: created.id, unit_id: uid })));
+      if(cuErr){
+        const { error: delErr } = await sb.from('contracts').delete().eq('id', created.id);
+        announceOccupancy();
+        return alert((/UNIT_OVERLAP/.test(cuErr.message) ? 'A unit in this contract already has a tenant, so the contract was not saved.\n\n' + cuErr.message.replace(/^.*UNIT_OVERLAP:\s*/, '') : 'The units could not be linked: ' + cuErr.message) + (delErr ? '\n\nThe unfinished contract could not be removed automatically. Please delete it from the Contracts list.' : ''));
+      } }
     // taking over mid-month from the previous contract: bill only the days from the new start (the old one was cut the day before)
     if(distinctActiveIds.length > 0) await sb.rpc('prorate_first_period', { p_contract_id: created.id });
     await applyAdvDep(created.id);
     await uploadSignedFileIfSelected(created.id);
     await uploadFileToTable('cAdvanceProof', 'contracts', 'contracts', 'id', created.id, 'advance_proof_path', 'advance_proof_name');
     await uploadFileToTable('cDepositProof', 'contracts', 'contracts', 'id', created.id, 'deposit_proof_path', 'deposit_proof_name');
-    await sb.from('contract_units').insert(unitIds.map(uid=>({ contract_id: created.id, unit_id: uid })));
     if(splitFrom) cancelEditContract();
+    announceOccupancy();
 
     const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', renter_id).single();
     const newMsg = await buildNotifyMessage('new', renter?.name||'', unitNamesJoined, created);
@@ -4037,7 +4104,7 @@ async function cancelContract(id){
   const recover = confirm('Do you still want to collect the rent that is unpaid on this contract?\n\nOK = YES, keep the unpaid rent on the overdue list\nCancel = NO, write it off and remove it from all lists\n\n(You can change this later with the Recover dues / Write off dues button.)');
   const { error } = await sb.from('contracts').update({ status:'cancelled', end_date: cancelDate, recover_dues: recover }).eq('id', id);
   if(error){ alert('Could not cancel: ' + error.message + '\n\nIf it mentions recover_dues, run ace-feature-update-26.sql first.'); return; }
-  loadContractsTable(); loadUnitsTable(); loadDashboard();
+  announceOccupancy();
   try{
     const { data: cu } = await sb.from('contract_units').select('unit_id').eq('contract_id', id);
     const ids = (cu||[]).map(x=>x.unit_id);
