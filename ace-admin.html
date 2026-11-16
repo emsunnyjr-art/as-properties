@@ -561,7 +561,7 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
         <input id="cDepositPeriods" type="hidden" value="0">
         <div><label>Start date</label><input id="cStart" type="date" onchange="onEscalationChange(); updateAdvDepHint(); dueDayFromStart()"></div>
         <div><label id="cTermLabel">Term (months)</label><input id="cTerm" type="number" value="12" oninput="onEscalationChange()"></div>
-        <div id="cDueDayField"><label>Rent due day of month</label><input id="cDueDay" type="number" value="1" min="1" max="31" oninput="dueDayTouched=true"><p class="muted" style="margin:0;">Follows the start date (started on the 20th = due every 20th). You can change it. In shorter months it falls on the last day.</p></div>
+        <div id="cDueDayField"><label>Rent due day of month <span class="muted">(starts as the contract start day — editable)</span></label><input id="cDueDay" type="number" value="1" min="1" max="31" oninput="dueDayTouched=true"><p class="muted" style="margin:0;">Follows the start date (started on the 20th = due every 20th). You can change it. In shorter months it falls on the last day.</p></div>
       </div>
       <p class="muted" id="advDepHint" style="margin:2px 0 8px 0;"></p>
 
@@ -1631,14 +1631,14 @@ function renderOccupancyDrilldown(units, title){
   const panel = document.getElementById('drilldownPanel');
   if(!units.length){
     panel.innerHTML = `<div class="card"><p class="section-title">${title}</p><p class="muted">None right now.</p>
-      <button class="btn secondary small" onclick="document.getElementById('drilldownPanel').innerHTML=''">Dismiss</button></div>`;
+      <button class="btn secondary small" onclick="document.getElementById('drilldownPanel').innerHTML=''">Close</button></div>`;
     return;
   }
   panel.innerHTML = `
     <div class="card" style="border-color:var(--accent);">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <p class="section-title" style="margin:0;">${title} (${units.length})</p>
-        <button class="btn secondary small" onclick="document.getElementById('drilldownPanel').innerHTML=''">Dismiss</button>
+        <button class="btn secondary small" onclick="document.getElementById('drilldownPanel').innerHTML=''">Close</button>
       </div>
       <table>
         <thead><tr><th>Unit</th><th>Building</th><th>Renter</th><th>Rate</th><th>Ends</th></tr></thead>
@@ -1662,14 +1662,14 @@ function renderDrilldown(title, rows){
   const panel = document.getElementById('drilldownPanel');
   if(!rows || rows.length === 0){
     panel.innerHTML = `<div class="card"><p class="section-title">${title}</p><p class="muted">Nothing here.</p>
-      <button class="btn secondary small" onclick="document.getElementById('drilldownPanel').innerHTML=''">Dismiss</button></div>`;
+      <button class="btn secondary small" onclick="document.getElementById('drilldownPanel').innerHTML=''">Close</button></div>`;
     return;
   }
   panel.innerHTML = `
     <div class="card" style="border-color:var(--accent);">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <p class="section-title" style="margin:0;">${title} (${rows.length})</p>
-        <button class="btn secondary small" onclick="document.getElementById('drilldownPanel').innerHTML=''">Dismiss</button>
+        <button class="btn secondary small" onclick="document.getElementById('drilldownPanel').innerHTML=''">Close</button>
       </div>
       <table>
         <thead><tr><th>Renter</th><th>Unit</th><th>Period</th><th>Due</th><th>Paid</th><th>Status</th><th></th></tr></thead>
@@ -2024,7 +2024,7 @@ async function showUnitDetail(unitId){
           <p class="section-title" style="margin-bottom:2px;">${u.unit_name}</p>
           <p class="muted" style="margin-top:0;">${u.building_name||'—'}${u.location_name ? ' — '+u.location_name : ''}</p>
         </div>
-        <button class="btn secondary small" onclick="document.getElementById('unitDetailPanel').innerHTML=''">Dismiss</button>
+        <button class="btn secondary small" onclick="document.getElementById('unitDetailPanel').innerHTML=''">Close</button>
       </div>
 
       ${combinedNote}
@@ -3360,7 +3360,7 @@ function showNotifyPanel(renterName, email, contact, message, panelId, subject, 
         ${viberHref ? `<a class="btn" style="text-decoration:none;display:inline-block;" href="${viberHref}">💜 Open Viber</a>` : `<span class="muted">No contact number on file</span>`}
         ${smsHrefVal ? `<a class="btn secondary" style="text-decoration:none;display:inline-block;" href="${smsHrefVal}">💬 Open SMS</a>` : ''}
         ${emailStatusHtml}
-        <button class="btn secondary" onclick="document.getElementById('${panelId}').innerHTML=''">Dismiss</button>
+        <button class="btn secondary" onclick="document.getElementById('${panelId}').innerHTML=''">Close</button>
       </div>
       <p class="muted">"Open Viber" opens the right chat but won't pre-fill the message (confirmed not to work on either Desktop or mobile) — tap "Copy message" first, then paste it in yourself. SMS pre-fills correctly. Email, when available, sends for real automatically — the result is shown above.</p>
     </div>`;
@@ -3475,7 +3475,8 @@ function dueDayFromStart(){
 function showContractForm(show){
   const c = document.getElementById('contractFormCard'), b = document.getElementById('contractFormToggle');
   c.classList.toggle('hidden', !show);
-  b.textContent = show ? '✖ Hide contract form' : (editingContractId ? '✏️ Back to the contract being edited' : '➕ New contract');
+  if(show && !editingContractId){ dueDayTouched = false; dueDayFromStart(); }
+  b.textContent = show ? 'Close' : (editingContractId ? '✏️ Back to the contract being edited' : '➕ New contract');
   if(show) c.scrollIntoView({behavior:'smooth'});
 }
 function toggleContractForm(){
@@ -3641,6 +3642,7 @@ async function contractOverlapOk(unitIds, start, rentPeriod, term, ignoreIds, cl
 }
 async function saveContract(){
   const rentPeriod = document.getElementById('cRentPeriod').value;
+  dueDayFromStart();
   { const dd = parseInt(document.getElementById('cDueDay').value); if(rentPeriod === 'monthly' && !(dd >= 1 && dd <= 31)) return alert('Rent due day must be a number from 1 to 31.'); }
   const unitIds = getSelectedUnitIds();
   if(unitIds.length === 0) return alert('Select at least one unit');
@@ -3787,7 +3789,7 @@ async function saveContract(){
     const emailStatus2 = await trySendEmail(renter?.email, 'Your new lease contract', newMsg);
     showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number, newMsg, null, 'Your new lease contract', emailStatus2);
 
-    showContractForm(false);
+    showContractForm(false); dueDayTouched = false;
     document.getElementById('cNotes').value='';
     document.getElementById('cTerms').value = DEFAULT_TERMS;
     document.getElementById('cSignedFile').value = '';
@@ -3930,7 +3932,7 @@ function toggleContractHistory(i){
   if(!rows.length) return;
   const showing = rows[0].style.display !== 'none';
   rows.forEach(r=>{ r.style.display = showing ? 'none' : 'table-row'; });
-  if(btn) btn.textContent = showing ? btn.dataset.showLabel : '🔼 Hide history';
+  if(btn) btn.textContent = showing ? btn.dataset.showLabel : 'Close';
 }
 
 async function loadContractsTable(){
@@ -4761,7 +4763,7 @@ function rpRender(){
         <p class="section-title" style="margin:0;">${bulkEsc(h.renter_name||'')}</p>
         <p class="muted" style="margin:2px 0 0 0;">${bulkEsc(h.unit_names||'')}</p>
       </div>
-      <button class="btn secondary small" onclick="closeRenterPay()">✕ Close</button>
+      <button class="btn secondary small" onclick="closeRenterPay()">Close</button>
     </div>
     <p class="muted" style="margin:10px 0 6px 0;">Tick the months that were paid. Tap <strong>up to here</strong> to tick every month from the oldest to that one. If they paid only part of a month, tap <strong>Part-pay</strong> on that month.</p>
     ${rpRows.length ? `
@@ -5068,7 +5070,7 @@ function pvRender(){
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">
       <div><p class="section-title" style="margin:0;">${bulkEsc(rn.name||'')} <span class="muted">· ${bulkEsc(rn.renter_code||'')}</span></p>
         <p class="muted" style="margin:2px 0;">Sent ${new Date(pr.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'})}</p></div>
-      <button class="btn secondary small" onclick="closeProofReview()">✕ Close</button>
+      <button class="btn secondary small" onclick="closeProofReview()">Close</button>
     </div>
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
       <div style="flex:1 1 280px;min-width:260px;">
@@ -5174,7 +5176,7 @@ async function pvReject(){
     The message goes out by email and SMS within a minute (if on file). You can also send it yourself:<br>
     ${data.contact ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="${smsHref(data.contact, data.message)}">SMS</a>` : ''}
     ${viber ? `<a class="btn secondary small" style="text-decoration:none;display:inline-block;" href="viber://chat?number=${viber}&text=${encodeURIComponent(data.message)}">Viber</a>` : ''}
-    <button class="btn secondary small" onclick="closeProofReview()">Done</button></div>`;
+    <button class="btn secondary small" onclick="closeProofReview()">Close</button></div>`;
   loadDashboard();
 }
 
@@ -5255,7 +5257,7 @@ function statRenderControls(){
   document.getElementById('statListPanel').innerHTML = `<div class="card" style="border-color:var(--accent);">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
       <p class="section-title" style="margin:0;" id="statTitle"></p>
-      <button class="btn secondary small" onclick="showStatList(dashStatOpen)">✕ Close</button>
+      <button class="btn secondary small" onclick="showStatList(dashStatOpen)">Close</button>
     </div>
     <div class="row" style="margin:8px 0;align-items:flex-end;">
       <div><label>Location</label><select onchange="statSet('loc',this.value)"><option value="">All locations</option>${R.locs.map(l=>`<option value="${l.id}" ${statF.loc===l.id?'selected':''}>${bulkEsc(l.name)}</option>`).join('')}</select></div>
@@ -5732,7 +5734,7 @@ if(sb){
       <button class="btn secondary small" type="button" onclick="idZoomBy(1/1.4)">−</button>
       <button class="btn secondary small" type="button" onclick="idZoomBy(1.4)">+</button>
       <button class="btn secondary small" type="button" onclick="idZoomReset()">Fit</button>
-      <button class="btn small" type="button" onclick="closeIdZoom()">✕ Close</button>
+      <button class="btn small" type="button" onclick="closeIdZoom()">Close</button>
     </div>
   </div>
   <div id="idZoomStage" style="flex:1;overflow:hidden;position:relative;touch-action:none;">
@@ -5745,7 +5747,7 @@ if(sb){
     <strong id="previewTitle" style="color:var(--text);">Preview</strong>
     <div>
       <button class="btn small" onclick="printPreviewFrame()">🖨️ Print</button>
-      <button class="btn secondary small" onclick="closePreviewOverlay()">✕ Close</button>
+      <button class="btn secondary small" onclick="closePreviewOverlay()">Close</button>
     </div>
   </div>
   <iframe id="previewFrame" style="flex:1;border:none;width:100%;background:white;"></iframe>
