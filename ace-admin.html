@@ -193,6 +193,10 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
         <p class="muted" style="margin-top:-6px;">These receipts were read automatically and already credited to the renter's dues, oldest first. Check your GCash or bank account, then tap <strong>Confirm</strong>. If the money did not arrive, tap <strong>Reverse</strong> and the credit is undone.</p>
         <div id="autoProofsTable"></div>
       </div>
+      <div class="card hidden" id="endingCard">
+        <p class="section-title">Leases ending <span id="endingCount"></span></p>
+        <div id="endingList"></div>
+      </div>
       <div class="card hidden" id="overdueCard">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;">
           <p class="section-title" style="margin:0;">Overdue</p>
@@ -1369,6 +1373,33 @@ async function loadBalanceSummary(){
   return rows;
 }
 
+async function loadEndingLeases(){
+  const today = manilaToday();
+  const horizon = addDaysISO(today, 90);
+  const { data } = await sb.from('contracts')
+    .select('id, end_date, rent_amount, rent_period, renter_id, renters(name, contact_number), contract_units(units(unit_name))')
+    .eq('status','active').not('end_date','is',null).lte('end_date', horizon).order('end_date');
+  // a lease is only "ending" if the renter has no other active contract starting after its end
+  const { data: act } = await sb.from('contracts').select('id, renter_id, start_date').eq('status','active');
+  const rows = (data||[]).filter(c=>!(act||[]).some(o=>o.id!==c.id && o.renter_id===c.renter_id && o.start_date > c.end_date));
+  const card = document.getElementById('endingCard');
+  card.classList.toggle('hidden', rows.length===0);
+  document.getElementById('endingCount').innerHTML = rows.length ? `<span class="badge b-expiring">${rows.length}</span>` : '';
+  const dayMs = 86400000;
+  document.getElementById('endingList').innerHTML = rows.map(c=>{
+    const days = Math.round((new Date(c.end_date+'T00:00:00Z') - new Date(today+'T00:00:00Z'))/dayMs);
+    const units = (c.contract_units||[]).map(x=>x.units?.unit_name).filter(Boolean).join(', ');
+    const [cls, txt] = days < 0 ? ['b-expired', `Ended ${-days} day${days===-1?'':'s'} ago · continuing`]
+                     : days === 0 ? ['b-overdue','Ends today']
+                     : days <= 30 ? ['b-overdue', `${days} day${days===1?'':'s'} left`]
+                     : ['b-expiring', `${days} days left`];
+    return `<div class="hcard">
+      <div class="top"><div class="nm">${bulkEsc(c.renters?.name||'—')}</div><span class="badge ${cls}">${txt}</span></div>
+      <div class="sub">${bulkEsc(units||'—')} · ${fmtMoney(c.rent_amount)} ${bulkEsc(c.rent_period||'')} · ends ${fmtDate(c.end_date)}</div>
+      <div class="acts">${c.renters?.contact_number ? `<a class="lnkbtn" href="${smsHref(c.renters.contact_number, 'Hi '+(c.renters?.name||'')+', your lease ends on '+fmtDateLong(c.end_date)+'. Please let us know if you would like to renew.')}">Message</a>` : '<span></span>'}
+        <button class="btn secondary big" onclick="openRenterPay('${c.id}')">Open</button></div></div>`;
+  }).join('');
+}
 async function loadDashboard(){
   try{ loadProofs(); }catch(e){}
   try{ loadOwnerArea(); }catch(e){}
@@ -1439,6 +1470,7 @@ async function loadDashboard(){
         </div></div>`;
     }).join('');
 
+    try{ loadEndingLeases(); }catch(e){ console.error(e); }
     // Also this week
     const aw = [];
     if(expiringCount) aw.push(`<div class="alsoRow"><span>${expiringCount} lease${expiringCount===1?'':'s'} ending soon</span><button class="btn secondary small" onclick="showStatList('expiring')">View</button></div>`);
