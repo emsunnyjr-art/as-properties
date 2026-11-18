@@ -4786,7 +4786,7 @@ async function loadItemizedBill(){
   if(!contractId){ card.innerHTML = ''; return; }
 
   const { data: rentRows } = await sb.from('rent_payments').select('*')
-    .eq('contract_id', contractId).in('status', ['pending','partial','overdue']).order('due_date');
+    .eq('contract_id', contractId).in('status', ['pending','partial','overdue']).lte('due_date', manilaToday()).order('due_date');   // only what is due now or already past due: never future months
   const { data: cuRows } = await sb.from('contract_units').select('unit_id').eq('contract_id', contractId);
   const unitIds = (cuRows||[]).map(r=>r.unit_id);
   const { data: utilRows } = unitIds.length
@@ -4799,7 +4799,7 @@ async function loadItemizedBill(){
   ];
 
   if(itemizedBillItems.length === 0){
-    card.innerHTML = `<div class="card"><p class="section-title">Itemized bill</p><p class="muted">Nothing outstanding for this contract right now.</p></div>`;
+    card.innerHTML = `<div class="card"><p class="section-title">Itemized bill</p><p class="muted">Nothing is due for this contract right now. Future months are not billed until they fall due.</p></div>`;
     return;
   }
 
@@ -5320,7 +5320,7 @@ async function openProofReview(id, focusReject){
   const billStarts = bm ? bm.split(',').map(x=>x.trim()).filter(Boolean) : [];
   const billRows = rows.filter(r=>billStarts.includes(String(r.period_start).slice(0,10)));
   if(billRows.length){ billRows.forEach(r=>{ r.checked = true; }); }
-  else rows.forEach(r=>{ if(acc < amt - 0.004){ r.checked = true; acc += r.balance; } });
+  else rows.forEach(r=>{ if(r.isDue && acc < amt - 0.004){ r.checked = true; acc += r.balance; } });   // default: only months already due; any extra stays as credit
   pv = { proof, rows, amount: amt, left: amt, keepCredit: true };
   pvAllocate(); pvRender();
   if(window.__pvAutoAgain){ window.__pvAutoAgain = false; await pvAutoFill(false); }
