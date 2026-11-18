@@ -190,6 +190,11 @@ if(/type=recovery/.test(location.hash) && !/reset-password/.test(location.pathna
         <p class="muted" style="margin-top:-6px;">Nothing is marked paid until you approve. Check your GCash or bank account first.</p>
         <div id="proofsTable"></div>
       </div>
+      <div class="card hidden" id="creditsCard">
+        <p class="section-title">Credit on account <span id="creditsCount"></span></p>
+        <p class="muted" style="margin-top:-6px;">Extra money received. It is used automatically on the next rent that falls due (checked every hour).</p>
+        <div id="creditsList"></div>
+      </div>
       <div class="card hidden" id="autoProofsCard" style="border-color:var(--accent);">
         <p class="section-title">Credited from chat — needs your check <span id="autoProofsCount"></span></p>
         <p class="muted" style="margin-top:-6px;">These receipts were read automatically and already credited to the renter's dues, oldest first. Check your GCash or bank account, then tap <strong>Confirm</strong>. If the money did not arrive, tap <strong>Reverse</strong> and the credit is undone.</p>
@@ -5218,6 +5223,7 @@ async function loadProofs(){
         </div></div>`;
     }).join('');
   }
+  try{ loadCredits(); }catch(e){}
   window.__proofCount = rows.length + autoRows.length;
   setProofTile(rows.length + autoRows.length);
   card.classList.toggle('hidden', rows.length === 0);
@@ -5235,6 +5241,29 @@ async function loadProofs(){
   }).join('');
 }
 
+async function loadCredits(){
+  const { data } = await sb.from('renter_credits').select('id, renter_id, amount, remaining, received_date, reference, created_at, renters(name, renter_code)').eq('status','open').gt('remaining', 0).order('received_date');
+  const rows = data || [];
+  document.getElementById('creditsCard').classList.toggle('hidden', rows.length === 0);
+  document.getElementById('creditsCount').innerHTML = rows.length ? `<span class="badge b-active">${rows.length}</span>` : '';
+  document.getElementById('creditsList').innerHTML = rows.map(c=>`<div class="hcard">
+    <div class="top"><div class="nm">${bulkEsc(c.renters?.name||'—')} <span class="muted">${bulkEsc(c.renters?.renter_code||'')}</span></div><div class="amt">${fmtMoney(c.remaining)}</div></div>
+    <div class="sub">of ${fmtMoney(c.amount)} received ${fmtDate(c.received_date)}${c.reference ? ' · ref ' + bulkEsc(c.reference) : ''}</div>
+    <div class="acts"><button class="btn secondary big" onclick="creditVoid('${c.id}')">Void</button><button class="btn big" onclick="creditApplyNow('${c.renter_id}')">Use on dues now</button></div></div>`).join('');
+}
+async function creditApplyNow(renterId){
+  const { data, error } = await sb.rpc('apply_renter_credits', { p_renter_id: renterId });
+  if(error) return alert(error.message);
+  alert(Number(data?.applied) > 0 ? `Used ${fmtMoney(data.applied)} on ${data.lines} due month${data.lines===1?'':'s'}.` : 'Nothing is due yet, so the credit stays on the account. It is used automatically when the next rent falls due.');
+  loadCredits(); try{ loadDashboard(); loadPaymentSchedule(); }catch(e){}
+}
+async function creditVoid(id){
+  const reason = prompt('Why are you voiding this credit? (e.g. refunded to the renter)'); if(reason === null) return;
+  if(!reason.trim()) return alert('Please type a reason.');
+  const { error } = await sb.rpc('void_renter_credit', { p_credit_id: id, p_reason: reason.trim() });
+  if(error) return alert(error.message);
+  loadCredits();
+}
 async function autoProofConfirm(id){
   if(!confirm('Confirm that this money really arrived in your account?')) return;
   const { error } = await sb.rpc('confirm_auto_proof', { p_proof_id: id });
@@ -5292,7 +5321,7 @@ async function openProofReview(id, focusReject){
   const billRows = rows.filter(r=>billStarts.includes(String(r.period_start).slice(0,10)));
   if(billRows.length){ billRows.forEach(r=>{ r.checked = true; }); }
   else rows.forEach(r=>{ if(acc < amt - 0.004){ r.checked = true; acc += r.balance; } });
-  pv = { proof, rows, amount: amt, left: amt };
+  pv = { proof, rows, amount: amt, left: amt, keepCredit: true };
   pvAllocate(); pvRender();
   if(focusReject){ pvShowReject(); const t = document.getElementById('pvReasonTxt'); if(t){ t.scrollIntoView({block:'center'}); t.focus(); } }
 }
@@ -5350,7 +5379,9 @@ function pvRender(){
             <td>${fmtMoney(r.balance)}</td><td>${r.alloc ? fmtMoney(r.alloc) : '—'}</td></tr>`).join('') : '<tr><td colspan="4" class="muted">No unpaid months for this renter.</td></tr>'}</tbody>
         </table></div>
         <p style="margin:8px 0;">
-          ${pv.left > 0.004 ? `<span class="bad">₱${pv.left.toLocaleString('en-PH',{minimumFractionDigits:2})} of this payment is not applied to any month. Approve stays locked until the whole amount is applied.</span> <button class="btn secondary small" type="button" onclick="pvAutoFill()">⚡ Apply to the next months</button>`
+          ${pv.left > 0.004 ? `<span class="bad">${fmtMoney(pv.left)} is more than the months ticked.</span>
+            <button class="btn secondary small" type="button" onclick="pvAutoFill()">⚡ Extend: apply to the next months</button>
+            <label style="display:flex;gap:8px;align-items:center;margin:8px 0 0;font-weight:normal;"><input type="checkbox" style="width:auto" ${pv.keepCredit?'checked':''} onchange="pvKeepCredit(this.checked)"> Keep ${fmtMoney(pv.left)} as credit on account — it is used automatically when the next rent falls due</label>`
             : `<span class="good">✓ Fully applied.</span> Unpaid (already due) after this payment: <strong>${fmtMoney(after)}</strong>`}
         </p>
 
@@ -5360,7 +5391,7 @@ function pvRender(){
         </div>
         <label style="display:flex;gap:8px;align-items:center;margin-top:8px;"><input id="pvPayer" type="checkbox" style="width:auto" ${pr.sender_text && f.sender !== 'match' ? 'checked' : ''} ${pr.sender_text ? '' : 'disabled'}> Remember this sender as a payer for ${bulkEsc(rn.name||'this renter')}</label>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
-          <button class="btn" id="pvApprove" ${pv.left > 0.004 || !applied ? 'disabled' : ''} onclick="pvApprove()">✅ I checked my account — Approve</button>
+          <button class="btn" id="pvApprove" ${(pv.left > 0.004 && !pv.keepCredit) || (!applied && !pv.keepCredit) ? 'disabled' : ''} onclick="pvApprove()">✅ I checked my account — Approve</button>
           <button class="btn danger" onclick="pvShowReject()">Reject…</button>
         </div>
         <div id="pvRejectBox" class="hidden" style="margin-top:12px;padding:10px;border:1px solid var(--bad);border-radius:10px;">
@@ -5382,6 +5413,7 @@ function pvRender(){
   </div>`;
 }
 function pvToggle(i,on){ pv.rows[i].checked = on; pvAllocate(); const keep = document.getElementById('pvMethod')?.value; pvRender(); if(keep) document.getElementById('pvMethod').value = keep; }
+function pvKeepCredit(on){ pv.keepCredit = on; const keep = document.getElementById('pvMethod')?.value; pvRender(); if(keep) document.getElementById('pvMethod').value = keep; }
 function pvAutoFill(){
   // tick unpaid months, oldest first (keeping the ones already ticked), until the whole payment is applied
   pvAllocate();
@@ -5395,7 +5427,8 @@ async function pvApprove(){
   const alloc = pv.rows.filter(r=>r.alloc > 0).map(r=>({ rent_payment_id: r.rent_payment_id, amount: r.alloc }));
   const date = document.getElementById('pvDate').value;
   if(!date || date > manilaToday()){ alert('Choose a date received that is today or earlier.'); return; }
-  if(!confirm(`Record ${fmtMoney(pr.amount)} from ${rn.name} (ref ${pr.ref_number}) for ${alloc.length} month${alloc.length===1?'':'s'}?\n\nOnly do this after you have seen the money in your account.`)) return;
+  const keepCredit = pv.left > 0.004 && pv.keepCredit;
+  if(!confirm(`Record ${fmtMoney(pr.amount)} from ${rn.name} (ref ${pr.ref_number}) for ${alloc.length} month${alloc.length===1?'':'s'}${keepCredit ? ' and keep ' + fmtMoney(pv.left) + ' as credit on account' : ''}?\n\nOnly do this after you have seen the money in your account.`)) return;
   const btn = document.getElementById('pvApprove'); btn.disabled = true; btn.textContent = 'Saving…';
   let path = null, name = null;
   if(pr.image_b64){
@@ -5412,11 +5445,13 @@ async function pvApprove(){
   const { data, error } = await sb.rpc('approve_payment_proof', {
     p_proof_id: pr.id, p_allocations: alloc, p_received_date: date,
     p_method: document.getElementById('pvMethod').value, p_receipt_path: path, p_receipt_name: name,
-    p_note: 'Proof sent by renter', p_save_payer: !!document.getElementById('pvPayer')?.checked
+    p_note: 'Proof sent by renter', p_save_payer: !!document.getElementById('pvPayer')?.checked,
+    p_keep_credit: keepCredit
   });
   if(error){ alert('Nothing was recorded: ' + error.message); btn.disabled = false; btn.textContent = '✅ I checked my account — Approve'; return; }
   closeProofReview();
-  alert(`Recorded ${fmtMoney(data?.total ?? pr.amount)} from ${rn.name}. The renter was notified.`);
+  const ck = Number(data?.credit_kept || 0), ca = Number(data?.credit_applied_now || 0);
+  alert(`Recorded ${fmtMoney(data?.total ?? pr.amount)} from ${rn.name}.` + (ck > 0 ? `\n\n${fmtMoney(ck)} was kept as credit on account` + (ca > 0 ? ` and ${fmtMoney(ca)} of it was used right away on dues already due` : '') + '.' : '') + '\n\nThe renter was notified.');
   loadDashboard();
   try{ loadPaymentSchedule(); }catch(e){}
 }
