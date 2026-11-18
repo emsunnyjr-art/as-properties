@@ -5313,7 +5313,7 @@ async function openProofReview(id, focusReject){
   if(error || !proof){ ov.innerHTML = `<div class="card" style="max-width:600px;width:100%;"><p>Could not load this proof: ${bulkEsc(error?.message||'not found')}</p><button class="btn secondary" onclick="closeProofReview()">Close</button></div>`; return; }
   const { data: open } = await sb.rpc('renter_open_periods', { p_renter_id: proof.renter_id });
   const today = manilaToday();
-  const due = (open||[]).filter(r=>r.due_date <= today), upcoming = (open||[]).filter(r=>r.due_date > today).slice(0,6);
+  const due = (open||[]).filter(r=>r.due_date <= today), upcoming = (open||[]).filter(r=>r.due_date > today).slice(0,60);
   const rows = [...due, ...upcoming].map(r=>({ ...r, balance: Number(r.balance), checked:false, alloc:0, isDue: r.due_date <= today }));
   let acc = 0; const amt = Number(proof.amount);
   const bm = (String(proof.note||'').match(/Bill months: ([0-9, -]+)/) || [])[1];
@@ -5323,6 +5323,7 @@ async function openProofReview(id, focusReject){
   else rows.forEach(r=>{ if(acc < amt - 0.004){ r.checked = true; acc += r.balance; } });
   pv = { proof, rows, amount: amt, left: amt, keepCredit: true };
   pvAllocate(); pvRender();
+  if(window.__pvAutoAgain){ window.__pvAutoAgain = false; await pvAutoFill(false); }
   if(focusReject){ pvShowReject(); const t = document.getElementById('pvReasonTxt'); if(t){ t.scrollIntoView({block:'center'}); t.focus(); } }
 }
 function closeProofReview(){ const o = document.getElementById('proofOverlay'); if(o) o.style.display = 'none'; pv = null; }
@@ -5414,12 +5415,21 @@ function pvRender(){
 }
 function pvToggle(i,on){ pv.rows[i].checked = on; pvAllocate(); const keep = document.getElementById('pvMethod')?.value; pvRender(); if(keep) document.getElementById('pvMethod').value = keep; }
 function pvKeepCredit(on){ pv.keepCredit = on; const keep = document.getElementById('pvMethod')?.value; pvRender(); if(keep) document.getElementById('pvMethod').value = keep; }
-function pvAutoFill(){
+async function pvAutoFill(allowExtend = true){
   // tick unpaid months, oldest first (keeping the ones already ticked), until the whole payment is applied
   pvAllocate();
   for(const r of pv.rows){ if(pv.left <= 0.004) break; if(!r.checked){ r.checked = true; pvAllocate(); } }
+  if(pv.left > 0.004 && allowExtend){
+    const last = pv.rows[pv.rows.length-1];
+    if(last && confirm(`Every unpaid month is already covered and ${fmtMoney(pv.left)} is still left.\n\nAdd more rent months after the last one on this renter's contract, just enough to cover it?`)){
+      const { data, error } = await sb.rpc('extend_contract_periods', { p_contract_id: last.contract_id, p_amount: pv.left });
+      if(error) return alert('Could not add months: ' + error.message);
+      window.__pvAutoAgain = true;
+      return openProofReview(pv.proof.id);   // reload with the new months, then tick them
+    }
+  }
   const keep = document.getElementById('pvMethod')?.value; pvRender(); if(keep) document.getElementById('pvMethod').value = keep;
-  if(pv.left > 0.004) alert(`Even with every unpaid month ticked, ${fmtMoney(pv.left)} is left over. This renter paid more than all the rent still owed, so reject this proof (or ask the renter), or record the extra by hand later.`);
+  if(pv.left > 0.004 && !allowExtend) alert(`${fmtMoney(pv.left)} could not be applied to months. It can still be kept as credit on account.`);
 }
 function pvShowReject(){ document.getElementById('pvRejectBox').classList.toggle('hidden'); }
 async function pvApprove(){
