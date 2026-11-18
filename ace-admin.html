@@ -3189,7 +3189,7 @@ async function sendPlanForSignature(planId){
   }
   const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', pl.renter_id).single();
   const link = `${SITE_BASE_URL}sign-plan.html?token=${token}`;
-  const message = `Hi ${renter?.name||''}, here is your payment plan for ${fmtMoney(pl.total_amount)}. Please review and sign it here: ${link}`;
+  const message = `Hi ${renter?.name||''}, here is your payment plan for ${fmtMoney(pl.total_amount)}. Please review and sign it using the link below.\n\nReview and sign your payment plan:\n${link}`;
   const emailStatus = await trySendEmail(renter?.email, 'Please sign your payment plan', message);
   showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number, message, 'planNotifyPanel', 'Please sign your payment plan', emailStatus);
 }
@@ -3421,7 +3421,7 @@ async function sendForSignature(contractId){
   const { data: renter } = await sb.from('renters').select('name, email, contact_number').eq('id', existing.renter_id).single();
 
   const signLink = `${SITE_BASE_URL}sign-contract.html?token=${token}`;
-  const message = `Hi ${renter?.name||''}, please review and sign your lease contract for ${unitNames} here: ${signLink}`;
+  const message = `Hi ${renter?.name||''}, please review and sign your lease contract for ${unitNames} using the link below.\n\nReview and sign your contract:\n${signLink}`;
   const emailStatus = await trySendEmail(renter?.email, 'Please sign your lease contract', message);
   showNotifyPanel(renter?.name||'', renter?.email, renter?.contact_number, message, null, 'Please sign your lease contract', emailStatus);
 }
@@ -4908,7 +4908,7 @@ async function sendItemizedBill(contractId){
   const lines = checked.map(it => `- ${it.label}: ${fmtMoney(it.amount)}`).join('\n');
   const billPs = checked.filter(it=>it.ps).map(it=>it.ps).join(',');
   const payLink = renter?.portal_token ? portalLinkFor(renter) + (billPs ? '&b=' + billPs : '') : '';
-  const linkText = payLink ? `\n\nPay, then upload your receipt here (scan-to-pay QR and account details are on the page):\n${payLink}` : '';
+  const linkText = payLink ? `\n\nPayment details and scan-to-pay QR are on the page below. After paying, upload your receipt there.\n\nPay and upload your receipt:\n${payLink}` : '';
   const message = `Hi ${renter?.name||''}, here is your itemized bill for ${unitNames}:\n\n${lines}\n\nTotal: ${fmtMoney(total)}${payText}${linkText}`;
 
   const emailStatus3 = await trySendEmail(renter?.email, 'Your Itemized Bill', message);
@@ -5133,7 +5133,7 @@ function renterPortalHtml(r){
     <span class="muted"> · payment link is OFF (the old link no longer works)</span><br>
     <button class="btn secondary small" onclick="setPortalLink('${r.id}', true, false)">Turn link on (new link)</button></div>`;
   const link = portalLinkFor(r);
-  const msg = `Hi ${r.name}, here is your personal link to pay and send your proof of payment (Renter ID ${r.renter_code}): ${link}`;
+  const msg = `Hi ${r.name}, here is your personal page to pay and send your proof of payment (Renter ID ${r.renter_code}).\n\nPay and upload your receipt:\n${link}`;
   const viber = viberNumber(r.contact_number);
   return `<div style="margin:8px 0;padding:10px;border:1px dashed var(--line);border-radius:10px;">
     <strong>Renter ID: ${bulkEsc(r.renter_code)}</strong>
@@ -5295,7 +5295,7 @@ async function copyTelegramLink(renterId, btn){
   const { data: r } = await sb.from('renters').select('id, name, portal_token').eq('id', renterId).single();
   if(!r?.portal_token) return alert('Turn this renter\'s payment link on first.');
   const link = await telegramLinkFor(r); if(!link) return;
-  const msg = `Hi ${r.name}, to send your rent receipts by Telegram, open this link once and press START: ${link}\nAfter that, just send the photo of your receipt there.`;
+  const msg = `Hi ${r.name}, to send your rent receipts by Telegram, open the link below once and press START.\n\nOpen Telegram:\n${link}\n\nAfter that, just send the photo of your receipt there.`;
   copyText(msg, btn);
 }
 let pv = null;
